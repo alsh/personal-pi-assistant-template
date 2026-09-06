@@ -9,10 +9,16 @@
 #   - enable write-capable remote connectors.
 #
 # Usage:
-#   ./scripts/setup.sh /path/to/empty-folder
+# Workflow (the current directory is the default target):
+#   cd /path/to/empty-folder
 #   curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh \
 #     -o /tmp/personal-pi-setup.sh
-#   bash /tmp/personal-pi-setup.sh /path/to/empty-folder
+#   sed -n '1,260p' /tmp/personal-pi-setup.sh   # review before execution
+#   bash /tmp/personal-pi-setup.sh
+#   rm -f /tmp/personal-pi-setup.sh
+#
+# Optional local invocation with an explicit target:
+#   ./scripts/setup.sh /path/to/empty-folder
 #
 # The downloaded script should be reviewed before execution.
 
@@ -28,8 +34,8 @@ usage() {
 Usage: setup.sh [TARGET_DIR] [--repo OWNER/REPOSITORY] [--ref REF]
 
 Clone the public personal-assistant template into an empty directory and run
-offline checks. No GitHub authentication, npm install, or account connection is
-required.
+offline checks. TARGET_DIR defaults to the current directory (`.`). No GitHub
+authentication, npm install, or account connection is required.
 EOF
 }
 

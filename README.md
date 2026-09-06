@@ -20,10 +20,11 @@ The template has no active Google Drive, pCloud, calendar, health, finance, bank
 The repository is public so a user does not need GitHub authentication to bootstrap it. Review the script before execution:
 
 ```bash
+cd /path/to/empty-folder
 curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh \
   -o /tmp/personal-pi-setup.sh
-sed -n '1,260p' /tmp/personal-pi-setup.sh
-bash /tmp/personal-pi-setup.sh /path/to/empty-folder
+sed -n '1,260p' /tmp/personal-pi-setup.sh   # review before execution
+bash /tmp/personal-pi-setup.sh
 rm -f /tmp/personal-pi-setup.sh
 ```
 
