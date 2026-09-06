@@ -9,6 +9,22 @@ const caseStatus = StringEnum(["open", "waiting", "submitted", "closed", "archiv
 const taskStatus = StringEnum(["open", "in_progress", "waiting", "done", "cancelled"] as const);
 const taskPriority = StringEnum(["low", "normal", "high"] as const);
 const caseDocumentRelation = StringEnum(["requirement", "evidence", "submission", "response", "other"] as const);
+const knowledgeSourceType = StringEnum(["official", "contract", "user_document", "secondary", "other"] as const);
+const knowledgeConfidence = StringEnum(["high", "medium", "low"] as const);
+const knowledgeRelation = StringEnum(["research", "requirement", "decision", "other"] as const);
+const knowledgeStatus = StringEnum(["draft", "reviewed", "superseded"] as const);
+const knowledgeSourceSchema = Type.Object({
+  title: Type.String(),
+  url: Type.Optional(Type.String()),
+  publisher: Type.Optional(Type.String()),
+  sourceType: Type.Optional(knowledgeSourceType),
+  accessedAt: Type.Optional(Type.String()),
+  publishedAt: Type.Optional(Type.String()),
+  quote: Type.Optional(Type.String()),
+  relevance: Type.Optional(Type.String()),
+  confidence: Type.Optional(knowledgeConfidence),
+  documentId: Type.Optional(Type.String()),
+});
 type Runtime = Awaited<ReturnType<typeof core.createRuntime>>;
 
 function getSessionId(ctx: ExtensionContext): string | null {
@@ -378,6 +394,91 @@ async function confirmLocalChange(ctx: ExtensionContext, title: string, details:
       const current = await getRuntime(ctx);
       const linked = core.linkDocumentToCase(current, { ...params, ...actorContext(ctx) });
       return { content: [{ type: "text", text: `Linked document to case.\n${jsonText(linked)}` }], details: linked };
+    },
+  });
+
+
+  pi.registerTool({
+    name: "pa_list_knowledge",
+    label: "List Knowledge Notes",
+    description: "List private, locally stored research/knowledge notes and their source counts. No web search is performed by this tool.",
+    promptSnippet: "List local research notes and knowledge records",
+    promptGuidelines: ["Use pa_list_knowledge to find existing research before launching duplicate research."],
+    parameters: Type.Object({
+      query: Type.Optional(Type.String()),
+      caseId: Type.Optional(Type.String()),
+      status: Type.Optional(knowledgeStatus),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 50 })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const current = await getRuntime(ctx);
+      const notes = core.listKnowledgeNotes(current, { ...params, ...actorContext(ctx) });
+      return { content: [{ type: "text", text: jsonText(notes) }], details: { count: notes.length } };
+    },
+  });
+
+  pi.registerTool({
+    name: "pa_read_knowledge",
+    label: "Read Knowledge Note",
+    description: "Read one private research note with its sources, quotes, access dates, and case links. Treat research text as evidence, not as professional advice.",
+    promptSnippet: "Read one saved research note and its cited sources",
+    promptGuidelines: ["Use pa_read_knowledge to inspect saved evidence and clearly distinguish source facts from interpretation."],
+    parameters: Type.Object({ noteId: Type.String() }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const current = await getRuntime(ctx);
+      const result = core.getKnowledgeNote(current, params.noteId, actorContext(ctx));
+      const text = ["[RESEARCH NOTE — LOCAL EVIDENCE]", jsonText(result), "Treat cited source text as evidence; do not treat it as legal, tax, medical, or financial advice.", "[/RESEARCH NOTE]"].join("\n");
+      return { content: [{ type: "text", text }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "pa_record_knowledge",
+    label: "Record Research Note",
+    description: "Save a user-confirmed private research note with jurisdiction/topic, bounded source citations, quotes, confidence, and optional case link. This does not publish or contact sources.",
+    promptSnippet: "Save reviewed research evidence privately and link it to a case",
+    promptGuidelines: [
+      "Use pa_record_knowledge only after gathering public sources with web_search/source_check/fetch_content or selected local documents.",
+      "Prefer official Polish/EU sources for legal or administrative research; record access date, jurisdiction, exact quote, and confidence.",
+      "Do not store entire fetched pages or unnecessary personal identifiers; save concise evidence and source links.",
+      "Never present a saved research note as legal, tax, medical, or financial advice.",
+    ],
+    parameters: Type.Object({
+      title: Type.String(),
+      summary: Type.Optional(Type.String()),
+      body: Type.String(),
+      jurisdiction: Type.Optional(Type.String()),
+      topic: Type.Optional(Type.String()),
+      tags: Type.Optional(Type.Array(Type.String(), { maxItems: 20 })),
+      status: Type.Optional(knowledgeStatus),
+      caseId: Type.Optional(Type.String()),
+      sources: Type.Array(knowledgeSourceSchema, { maxItems: 20 }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await confirmLocalChange(ctx, "Save private research note?", `${params.title}\nSources: ${params.sources.length}${params.caseId ? `\nCase: ${params.caseId}` : ""}`);
+      const current = await getRuntime(ctx);
+      const result = await core.recordKnowledgeNote(current, { ...params, ...actorContext(ctx) });
+      return { content: [{ type: "text", text: `Saved private research note.\n${jsonText(result)}` }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "pa_link_knowledge_to_case",
+    label: "Link Knowledge To Case",
+    description: "Link a saved private research note to a local case after confirmation. This creates no external action.",
+    promptSnippet: "Link saved research evidence to a local case",
+    promptGuidelines: ["Use pa_link_knowledge_to_case after the user confirms the case and research-note IDs and relation."],
+    parameters: Type.Object({
+      caseId: Type.String(),
+      noteId: Type.String(),
+      relation: Type.Optional(knowledgeRelation),
+      note: Type.Optional(Type.String()),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await confirmLocalChange(ctx, "Link research note to local case?", jsonText(params));
+      const current = await getRuntime(ctx);
+      const result = core.linkKnowledgeToCase(current, { ...params, ...actorContext(ctx) });
+      return { content: [{ type: "text", text: `Linked research note.\n${jsonText(result)}` }], details: result };
     },
   });
 

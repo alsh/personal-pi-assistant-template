@@ -301,6 +301,48 @@ function initializeSchema(db) {
       FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS case_documents_document_idx ON case_documents(document_id);
+    CREATE TABLE IF NOT EXISTS knowledge_notes (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL,
+      jurisdiction TEXT NOT NULL DEFAULT '',
+      topic TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'draft',
+      markdown_path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_notes_status_idx ON knowledge_notes(status, updated_at);
+    CREATE TABLE IF NOT EXISTS knowledge_sources (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL,
+      url TEXT,
+      title TEXT NOT NULL,
+      publisher TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL DEFAULT 'other',
+      accessed_at TEXT NOT NULL,
+      published_at TEXT,
+      quote TEXT NOT NULL DEFAULT '',
+      relevance TEXT NOT NULL DEFAULT '',
+      confidence TEXT NOT NULL DEFAULT 'medium',
+      document_id TEXT,
+      FOREIGN KEY(note_id) REFERENCES knowledge_notes(id) ON DELETE CASCADE,
+      FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS knowledge_sources_note_idx ON knowledge_sources(note_id);
+    CREATE TABLE IF NOT EXISTS case_knowledge (
+      case_id TEXT NOT NULL,
+      note_id TEXT NOT NULL,
+      relation TEXT NOT NULL DEFAULT 'research',
+      note TEXT NOT NULL DEFAULT '',
+      linked_at TEXT NOT NULL,
+      PRIMARY KEY(case_id, note_id),
+      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
+      FOREIGN KEY(note_id) REFERENCES knowledge_notes(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS case_knowledge_note_idx ON case_knowledge(note_id);
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
       timestamp TEXT NOT NULL,
@@ -380,6 +422,8 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
   const extractedDir = path.join(dataDir, "extracted");
   ensurePrivateDirectory(privateDocumentsDir);
   ensurePrivateDirectory(extractedDir);
+  const knowledgeDir = path.join(dataDir, "knowledge");
+  ensurePrivateDirectory(knowledgeDir);
   if (!roots.some((root) => root.absolute === privateDocumentsDir)) {
     roots.push({ configured: "<private-documents>", absolute: privateDocumentsDir, label: "private-documents", exists: true, private: true });
   }
@@ -394,6 +438,7 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
     dataDir,
     privateDocumentsDir,
     extractedDir,
+    knowledgeDir,
     dbPath,
     db,
     close() {
@@ -633,6 +678,7 @@ export function getStatus(runtime) {
   const proposals = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM proposals GROUP BY status`).all();
     const caseCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM cases GROUP BY status`).all();
     const taskCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM tasks GROUP BY status`).all();
+    const knowledgeCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM knowledge_notes GROUP BY status`).all();
   return {
     dataClass: "C2 document metadata/content",
     storage: "private local SQLite outside the project tree",
@@ -641,6 +687,7 @@ export function getStatus(runtime) {
     proposals: Object.fromEntries(proposals.map((row) => [row.status, row.count])),
     cases: Object.fromEntries(caseCounts.map((row) => [row.status, row.count])),
     tasks: Object.fromEntries(taskCounts.map((row) => [row.status, row.count])),
+    knowledge: Object.fromEntries(knowledgeCounts.map((row) => [row.status, row.count])),
     capabilities: ["read", "search", "index", "propose-local-change", "confirm-local-change", "local-cases", "local-tasks", "document-links"],
     prohibited: ["public-share", "remote-write", "delete", "browser-automation"],
   };
@@ -845,10 +892,165 @@ export function getCaseSummary(runtime, caseId, { actor = "assistant", sessionId
   const current = getCaseRow(runtime, caseId);
   const tasks = runtime.db.prepare(`SELECT * FROM tasks WHERE case_id = ? ORDER BY CASE status WHEN 'done' THEN 1 WHEN 'cancelled' THEN 2 ELSE 0 END, COALESCE(due_date, '9999-12-31'), updated_at DESC`).all(caseId).map(publicTask);
   const documents = runtime.db.prepare(`SELECT d.*, cd.relation, cd.note, cd.linked_at FROM case_documents cd JOIN documents d ON d.id = cd.document_id WHERE cd.case_id = ? AND d.status != 'missing' ORDER BY cd.linked_at DESC`).all(caseId).map((row) => ({ ...publicDocument(row, runtime), relation: row.relation, note: row.note, linkedAt: row.linked_at }));
-  const result = { case: publicCase(current), tasks, documents };
-  audit(runtime, { actor, sessionId, operation: "get_case_summary", result: "ok", details: { caseId, taskCount: tasks.length, documentCount: documents.length } });
+  const knowledge = runtime.db.prepare(`SELECT kn.*, ck.relation, ck.note AS link_note, ck.linked_at FROM case_knowledge ck JOIN knowledge_notes kn ON kn.id = ck.note_id WHERE ck.case_id = ? ORDER BY ck.linked_at DESC`).all(caseId).map((row) => ({ ...publicKnowledgeNote(row), relation: row.relation, note: row.link_note, linkedAt: row.linked_at }));
+  const result = { case: publicCase(current), tasks, documents, knowledge };
+  audit(runtime, { actor, sessionId, operation: "get_case_summary", result: "ok", details: { caseId, taskCount: tasks.length, documentCount: documents.length, knowledgeCount: knowledge.length } });
   return result;
 }
+const KNOWLEDGE_SOURCE_TYPES = new Set(["official", "contract", "user_document", "secondary", "other"]);
+const KNOWLEDGE_CONFIDENCE = new Set(["high", "medium", "low"]);
+const KNOWLEDGE_RELATIONS = new Set(["research", "requirement", "decision", "other"]);
+
+function publicKnowledgeNote(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    jurisdiction: row.jurisdiction,
+    topic: row.topic,
+    tags: JSON.parse(row.tags_json || "[]"),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function publicKnowledgeSource(row) {
+  return {
+    id: row.id,
+    url: row.url,
+    title: row.title,
+    publisher: row.publisher,
+    sourceType: row.source_type,
+    accessedAt: row.accessed_at,
+    publishedAt: row.published_at,
+    quote: row.quote,
+    relevance: row.relevance,
+    confidence: row.confidence,
+    documentId: row.document_id,
+  };
+}
+
+function validateKnowledgeSource(runtime, source) {
+  const title = requiredShortText(source.title, "source title", 240);
+  const url = source.url ? String(source.url).trim() : null;
+  if (url && !/^https?:\/\//i.test(url)) throw new Error("knowledge source URL must use http or https");
+  const sourceType = source.sourceType ?? "other";
+  if (!KNOWLEDGE_SOURCE_TYPES.has(sourceType)) throw new Error("unsupported knowledge source type");
+  const confidence = source.confidence ?? "medium";
+  if (!KNOWLEDGE_CONFIDENCE.has(confidence)) throw new Error("unsupported knowledge confidence");
+  const documentId = source.documentId ?? null;
+  if (!url && !documentId) throw new Error("knowledge source needs a URL or documentId");
+  if (documentId) {
+    const document = runtime.db.prepare(`SELECT id FROM documents WHERE id = ? AND status = 'active'`).get(documentId);
+    if (!document) throw new Error("knowledge source document not found");
+  }
+  return {
+    url,
+    title,
+    publisher: optionalLongText(source.publisher, "source publisher", 240),
+    sourceType,
+    accessedAt: optionalDate(source.accessedAt ?? isoNow(), "source accessedAt") ?? isoNow(),
+    publishedAt: optionalDate(source.publishedAt, "source publishedAt"),
+    quote: optionalLongText(source.quote, "source quote", 5_000),
+    relevance: optionalLongText(source.relevance, "source relevance", 1_000),
+    confidence,
+    documentId,
+  };
+}
+
+function writeKnowledgeMarkdown(runtime, note, sources) {
+  const lines = [
+    `# ${note.title}`,
+    "",
+    `- Note ID: ${note.id}`,
+    `- Jurisdiction: ${note.jurisdiction || "unspecified"}`,
+    `- Topic: ${note.topic || "unspecified"}`,
+    `- Status: ${note.status}`,
+    `- Updated: ${note.updatedAt}`,
+    "",
+    "## Summary",
+    note.summary || "(no summary)",
+    "",
+    "## Research note",
+    note.body,
+    "",
+    "## Sources",
+    ...sources.map((source) => `- ${source.title}${source.url ? ` — ${source.url}` : ""} (${source.sourceType}, confidence: ${source.confidence}, accessed: ${source.accessedAt})${source.quote ? ` [quote: ${source.quote.replaceAll(/\s+/g, " ")}]` : ""}`),
+    "",
+    "This note is research evidence, not legal, tax, medical, or financial advice.",
+    "",
+  ];
+  return lines.join("\n");
+}
+
+export async function recordKnowledgeNote(runtime, { title, summary = "", body, jurisdiction = "", topic = "", tags = [], status = "draft", caseId = null, sources = [], actor = "assistant", sessionId = null } = {}) {
+  const cleanTitle = requiredShortText(title, "knowledge note title", 240);
+  const cleanSummary = optionalLongText(summary, "knowledge note summary", 5_000);
+  const cleanBody = requiredShortText(body, "knowledge note body", 30_000);
+  if (!["draft", "reviewed", "superseded"].includes(status)) throw new Error("unsupported knowledge note status");
+  if (caseId) getCaseRow(runtime, caseId);
+  if (!Array.isArray(sources) || sources.length > 20) throw new Error("knowledge note has too many sources");
+  const cleanSources = sources.map((source) => validateKnowledgeSource(runtime, source));
+  const now = isoNow();
+  const id = `note_${randomUUID()}`;
+  const cleanTags = normalizeTags(tags);
+  const markdownPath = path.join(runtime.knowledgeDir, `${id}.md`);
+  const note = { id, title: cleanTitle, summary: cleanSummary, body: cleanBody, jurisdiction: optionalLongText(jurisdiction, "jurisdiction", 160), topic: optionalLongText(topic, "topic", 240), tags: cleanTags, status, updatedAt: now };
+  ensurePrivateDirectory(runtime.knowledgeDir);
+  await fs.writeFile(markdownPath, writeKnowledgeMarkdown(runtime, note, cleanSources), { encoding: "utf8", mode: 0o600 });
+  runtime.db.prepare(`INSERT INTO knowledge_notes (id,title,summary,body,jurisdiction,topic,tags_json,status,markdown_path,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, cleanTitle, cleanSummary, cleanBody, note.jurisdiction, note.topic, safeJson(cleanTags), status, path.relative(runtime.dataDir, markdownPath).replaceAll(path.sep, "/"), now, now);
+  for (const source of cleanSources) {
+    runtime.db.prepare(`INSERT INTO knowledge_sources (id,note_id,url,title,publisher,source_type,accessed_at,published_at,quote,relevance,confidence,document_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(`source_${randomUUID()}`, id, source.url, source.title, source.publisher, source.sourceType, source.accessedAt, source.publishedAt, source.quote, source.relevance, source.confidence, source.documentId);
+  }
+  if (caseId) {
+    runtime.db.prepare(`INSERT INTO case_knowledge (case_id,note_id,relation,note,linked_at) VALUES (?,?,?,?,?)`).run(caseId, id, "research", "", now);
+  }
+  audit(runtime, { actor, sessionId, operation: "record_knowledge_note", result: "ok", details: { noteId: id, sourceCount: cleanSources.length, caseId: caseId ?? null, status } });
+  hardenDatabaseFiles(runtime.dbPath);
+  return { note: publicKnowledgeNote(runtime.db.prepare(`SELECT * FROM knowledge_notes WHERE id = ?`).get(id)), sources: cleanSources, caseId };
+}
+
+export function listKnowledgeNotes(runtime, { query = "", caseId, status, limit = 50, actor = "assistant", sessionId = null } = {}) {
+  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+  const clauses = [];
+  const values = [];
+  if (query) { clauses.push("(kn.title LIKE ? OR kn.summary LIKE ? OR kn.topic LIKE ? OR kn.body LIKE ?)"); const pattern = `%${String(query).trim()}%`; values.push(pattern, pattern, pattern, pattern); }
+  if (caseId) { getCaseRow(runtime, caseId); clauses.push("EXISTS (SELECT 1 FROM case_knowledge ck WHERE ck.note_id = kn.id AND ck.case_id = ?)"); values.push(caseId); }
+  if (status) { if (!["draft", "reviewed", "superseded"].includes(status)) throw new Error("unsupported knowledge note status"); clauses.push("kn.status = ?"); values.push(status); }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  values.push(boundedLimit);
+  const notes = runtime.db.prepare(`SELECT kn.* FROM knowledge_notes kn ${where} ORDER BY kn.updated_at DESC LIMIT ?`).all(...values).map(publicKnowledgeNote);
+  audit(runtime, { actor, sessionId, operation: "list_knowledge_notes", result: "ok", details: { count: notes.length } });
+  return notes;
+}
+
+export function getKnowledgeNote(runtime, noteId, { actor = "assistant", sessionId = null } = {}) {
+  const row = runtime.db.prepare(`SELECT * FROM knowledge_notes WHERE id = ?`).get(noteId);
+  if (!row) throw new Error("knowledge note not found");
+  const sources = runtime.db.prepare(`SELECT * FROM knowledge_sources WHERE note_id = ? ORDER BY accessed_at DESC`).all(noteId).map(publicKnowledgeSource);
+  const links = runtime.db.prepare(`SELECT case_id, relation, note, linked_at FROM case_knowledge WHERE note_id = ? ORDER BY linked_at DESC`).all(noteId);
+  const result = { note: publicKnowledgeNote(row), body: row.body, sources, caseLinks: links };
+  audit(runtime, { actor, sessionId, operation: "read_knowledge_note", result: "ok", details: { noteId, sourceCount: sources.length } });
+  return result;
+}
+
+export function linkKnowledgeToCase(runtime, { caseId, noteId, relation = "research", note = "", actor = "assistant", sessionId = null } = {}) {
+  getCaseRow(runtime, caseId);
+  const knowledge = runtime.db.prepare(`SELECT id FROM knowledge_notes WHERE id = ?`).get(noteId);
+  if (!knowledge) throw new Error("knowledge note not found");
+  if (!KNOWLEDGE_RELATIONS.has(relation)) throw new Error("unsupported knowledge relation");
+  const cleanNote = optionalLongText(note, "knowledge link note", 2_000);
+  const now = isoNow();
+  runtime.db.prepare(`INSERT INTO case_knowledge (case_id,note_id,relation,note,linked_at) VALUES (?,?,?,?,?) ON CONFLICT(case_id,note_id) DO UPDATE SET relation=excluded.relation,note=excluded.note,linked_at=excluded.linked_at`).run(caseId, noteId, relation, cleanNote, now);
+  audit(runtime, { actor, sessionId, operation: "link_knowledge_to_case", result: "ok", details: { caseId, noteId, relation } });
+  hardenDatabaseFiles(runtime.dbPath);
+  return { caseId, noteId, relation, note: cleanNote, linkedAt: now };
+}
+
+
 
 
 function getDocumentRow(runtime, documentId) {

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-assistant.invalid/schemas/knowledge-note.schema.json",
+  "title": "Private research knowledge note",
+  "type": "object",
+  "required": ["id", "title", "body", "status", "createdAt", "updatedAt", "sources"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^note_" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "summary": { "type": "string", "maxLength": 5000 },
+    "body": { "type": "string", "maxLength": 30000 },
+    "jurisdiction": { "type": "string", "maxLength": 160 },
+    "topic": { "type": "string", "maxLength": 240 },
+    "status": { "enum": ["draft", "reviewed", "superseded"] },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "sources": { "type": "array", "items": { "type": "object" } }
+  },
+  "additionalProperties": true
+}

@@ -7,6 +7,7 @@ No remote connector is enabled.
 | Local document roots | Explicit paths from config/environment | Confirmed local rename/move/tag only | Active |
 | Local document import | User-selected source file | Private local copy/text extraction after confirmation | Active |
 | Local cases/tasks | Private local database | Create/update/link/close after confirmation | Active |
+| Public research/knowledge | Public queries without personal identifiers | Save bounded note/source citations after confirmation | Active |
 | Google Calendar | Explicit future read-only calendar scope | None | Disabled |
 | Google Drive | Explicit future private file/folder scope | None initially | Disabled |
 | pCloud | Explicit future private encrypted backup folder | Upload only after restore test/confirmation | Disabled |

@@ -10,7 +10,7 @@ npm run check:policy
 npm run check:permissions
 ```
 
-Changes that add a connector must include:
+Changes that add a connector or research integration must include:
 
 - a manifest with exact scopes and data classification;
 - a read-only fixture adapter and tests;
@@ -18,6 +18,7 @@ Changes that add a connector must include:
 - explicit revoke/retention behavior;
 - public-sharing/open-bind tests;
 - confirmation and audit behavior for writes;
+- source citation and confidence handling;
 - documentation in `docs/consent-matrix.md`.
 
 Do not add banking or medical browser-password/cookie automation. Do not add public-sharing functionality.

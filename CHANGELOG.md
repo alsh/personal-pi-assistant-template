@@ -8,5 +8,6 @@
 - Confirmation-gated document rename/move/tag proposals.
 - User-confirmed import of external local documents into the private data store.
 - Private local document cases, checklist tasks, due dates, linked documents, statuses, and closure tracking.
+- Private research/knowledge notes with bounded citations, confidence, jurisdiction, and case links.
 - Synthetic fixtures, schemas, skills, prompts, policy checks, permission checks, and offline tests.
 - No remote connector, public sharing, banking, health, or calendar write integration.

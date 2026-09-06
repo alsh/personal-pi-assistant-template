@@ -89,6 +89,20 @@ try {
   const caseSummary = core.getCaseSummary(runtime, caseRecord.id);
   assert.equal(caseSummary.tasks[0].id, taskRecord.id);
   assert.equal(caseSummary.documents[0].id, warranty.id);
+
+  const knowledge = await core.recordKnowledgeNote(runtime, {
+    title: "Synthetic research note",
+    summary: "A cited synthetic note linked to the case.",
+    body: "The source says to verify the contractual party and keep a dated record.",
+    jurisdiction: "Poland",
+    topic: "document workflow",
+    caseId: caseRecord.id,
+    sources: [{ title: "Synthetic official source", url: "https://example.com/official", publisher: "Example Authority", sourceType: "official", quote: "Verify the contractual party.", confidence: "high" }],
+  });
+  assert.equal(knowledge.caseId, caseRecord.id);
+  const readKnowledge = core.getKnowledgeNote(runtime, knowledge.note.id);
+  assert.equal(readKnowledge.sources.length, 1);
+  assert.equal(core.getCaseSummary(runtime, caseRecord.id).knowledge.length, 1);
   const progressedTask = core.updateTask(runtime, { taskId: taskRecord.id, status: "done" });
   assert.equal(progressedTask.status, "done");
   const closedCase = core.updateCase(runtime, { caseId: caseRecord.id, status: "closed" });
