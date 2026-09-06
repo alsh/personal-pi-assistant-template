@@ -271,8 +271,6 @@ async function readNoteFile(runtime, filePath, query = "") {
     path: relativePath,
     title: titleFor(filePath, content),
     modifiedAt: stat.mtime.toISOString(),
-    size: stat.size,
-    contentHash: sha256(content),
     excerpt: noteExcerpt(content, query),
     content,
   };
