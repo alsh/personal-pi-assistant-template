@@ -28,6 +28,10 @@ check_file() {
   echo "OK: private file $path"
 }
 
+check_dir "$data_dir/notes"
+check_dir "$data_dir/documents"
+check_dir "$data_dir/extracted"
+check_file "$data_dir/audit.ndjson"
 check_dir "$data_dir"
 check_file "$data_dir/documents.sqlite"
 check_file "$data_dir/documents.sqlite-wal"

@@ -10,15 +10,11 @@ npm run check:policy
 npm run check:permissions
 ```
 
-Changes that add a connector or research integration must include:
+Changes must preserve these boundaries:
 
-- a manifest with exact scopes and data classification;
-- a read-only fixture adapter and tests;
-- provenance/freshness behavior;
-- explicit revoke/retention behavior;
-- public-sharing/open-bind tests;
-- confirmation and audit behavior for writes;
-- source citation and confidence handling;
-- documentation in `docs/consent-matrix.md`.
-
-Do not add banking or medical browser-password/cookie automation. Do not add public-sharing functionality.
+- canonical personal content remains in private text files, not a required database;
+- helper indexes are rebuildable from source files;
+- local writes require confirmation and redacted audit output;
+- connectors start read-only with exact scopes;
+- no public-sharing or unauthenticated endpoint is added;
+- synthetic fixtures are used for tests.

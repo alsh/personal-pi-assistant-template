@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promises as fs, existsSync, chmodSync, mkdirSync, realpathSync, statSync, readFileSync } from "node:fs";
+import { promises as fs, appendFileSync, existsSync, chmodSync, mkdirSync, realpathSync, statSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,8 +14,8 @@ export const DEFAULT_MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_MAX_FILES = 2_000;
 const MAX_ARCHIVE_ENTRIES = 50;
 const TEXT_EXTENSIONS = new Set([
-  ".md", ".markdown", ".txt", ".text", ".edm", ".xml", ".json", ".csv", ".tsv", ".html", ".htm", ".log",
-]);
+  ".md", ".markdown", ".org", ".orgmode", ".txt", ".text", ".edm", ".xml", ".json", ".csv", ".tsv", ".html", ".htm", ".log",
+ ]);
 const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ".pdf", ".zip"]);
 const IGNORED_DIRECTORY_NAMES = new Set([".git", ".pi", "node_modules", ".cache", "backups", "credentials", "secrets"]);
 
@@ -109,6 +109,8 @@ function mimeForExtension(extension) {
   return ({
     ".md": "text/markdown",
     ".markdown": "text/markdown",
+    ".org": "text/plain",
+    ".orgmode": "text/plain",
     ".txt": "text/plain",
     ".text": "text/plain",
     ".edm": "application/xml",
@@ -125,7 +127,7 @@ function mimeForExtension(extension) {
 }
 
 function titleFor(filePath, content) {
-  const heading = content.match(/^\s*#\s+(.+)$/m)?.[1]?.trim();
+  const heading = content.match(/^\s*(?:#|\*+)\s+(.+)$/m)?.[1]?.trim();
   if (heading) return heading.slice(0, 240);
   return path.basename(filePath, path.extname(filePath));
 }
@@ -233,6 +235,183 @@ async function collectFiles(rootPath, { maxFiles, maxFileBytes }) {
   return files;
 }
 
+const NOTE_EXTENSIONS = new Set([".md", ".markdown", ".org", ".orgmode", ".txt", ".text"]);
+function normalizeNotePath(value) {
+  if (typeof value !== "string" || !value.trim()) throw new Error("notePath is required");
+  let normalized = value.trim().replaceAll("\\", "/");
+  if (!path.extname(normalized)) normalized += ".md";
+  if (normalized.startsWith("/") || normalized.includes("\0")) throw new Error("notePath must be relative");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => part === "." || part === ".." || part.startsWith("."))) throw new Error("notePath may not escape or hide outside the notes directory");
+  const extension = path.extname(normalized).toLowerCase();
+  if (!NOTE_EXTENSIONS.has(extension)) throw new Error("notePath must use Markdown, Org, or plain-text format");
+  return parts.join("/");
+}
+function absoluteNotePath(runtime, notePath) {
+  const normalized = normalizeNotePath(notePath);
+  const absolute = path.resolve(runtime.notesDir, normalized);
+  if (!isWithin(runtime.notesDir, absolute)) throw new Error("notePath escapes the notes directory");
+  return { normalized, absolute };
+}
+function noteExcerpt(content, query = "") {
+  const clean = content.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const tokens = queryTokens(query);
+  const lower = clean.toLowerCase();
+  const at = tokens.map((token) => lower.indexOf(token.toLowerCase())).filter((value) => value >= 0).sort((a, b) => a - b)[0] ?? 0;
+  const start = Math.max(0, at - 160);
+  const end = Math.min(clean.length, start + 720);
+  return `${start > 0 ? "…" : ""}${clean.slice(start, end)}${end < clean.length ? "…" : ""}`;
+}
+async function readNoteFile(runtime, filePath, query = "") {
+  const content = normalizeText(await fs.readFile(filePath, "utf8"));
+  const stat = await fs.stat(filePath);
+  const relativePath = path.relative(runtime.notesDir, filePath).replaceAll(path.sep, "/");
+  return {
+    path: relativePath,
+    title: titleFor(filePath, content),
+    modifiedAt: stat.mtime.toISOString(),
+    size: stat.size,
+    contentHash: sha256(content),
+    excerpt: noteExcerpt(content, query),
+    content,
+  };
+}
+function noteMatches(content, query) {
+  const tokens = queryTokens(query).map((token) => token.toLowerCase());
+  const lower = content.toLowerCase();
+  return tokens.every((token) => lower.includes(token));
+}
+export async function listNotes(runtime, { query = "", limit = 100 } = {}) {
+  const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+  const files = await collectFiles(runtime.notesDir, { maxFiles: runtime.config.maxFiles, maxFileBytes: runtime.config.maxFileBytes });
+  const notes = [];
+  for (const file of files.filter((entry) => NOTE_EXTENSIONS.has(entry.extension))) {
+    const note = await readNoteFile(runtime, file.filePath, query);
+    if (!query || noteMatches(note.content, query)) {
+      const { content, ...summary } = note;
+      notes.push(summary);
+    }
+  }
+  return notes.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, boundedLimit);
+}
+export async function readNote(runtime, notePath, { maxChars = MAX_RESULT_CHARS } = {}) {
+  const { normalized, absolute } = absoluteNotePath(runtime, notePath);
+  const stat = await fs.lstat(absolute);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("note must be a regular file, not a symlink");
+  const note = await readNoteFile(runtime, absolute);
+  return { ...note, path: normalized, content: truncateUtf8(note.content, Math.min(MAX_RESULT_CHARS, maxChars)).text };
+}
+export async function createNote(runtime, { notePath, content = "", actor = "assistant", sessionId = null } = {}) {
+  const { normalized, absolute } = absoluteNotePath(runtime, notePath);
+  if (existsSync(absolute)) throw new Error(`note already exists: ${normalized}`);
+  ensurePrivateDirectory(path.dirname(absolute));
+  const cleanContent = normalizeText(String(content));
+  await fs.writeFile(absolute, cleanContent, { encoding: "utf8", mode: 0o600 });
+  tryChmod(absolute, 0o600);
+  audit(runtime, { actor, sessionId, operation: "create_note", result: "ok", details: { notePath: normalized } });
+  return readNote(runtime, normalized);
+}
+export async function writeNote(runtime, { notePath, content, actor = "assistant", sessionId = null } = {}) {
+  const { normalized, absolute } = absoluteNotePath(runtime, notePath);
+  const stat = await fs.lstat(absolute);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("note must be a regular file, not a symlink");
+  const cleanContent = normalizeText(String(content));
+  await fs.writeFile(absolute, cleanContent, { encoding: "utf8", mode: 0o600 });
+  tryChmod(absolute, 0o600);
+  audit(runtime, { actor, sessionId, operation: "write_note", result: "ok", details: { notePath: normalized } });
+  return readNote(runtime, normalized);
+}
+export async function appendNote(runtime, { notePath, content, actor = "assistant", sessionId = null } = {}) {
+  const { normalized, absolute } = absoluteNotePath(runtime, notePath);
+  const stat = await fs.lstat(absolute);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("note must be a regular file, not a symlink");
+  const current = await fs.readFile(absolute, "utf8");
+  const addition = String(content);
+  const separator = current.length > 0 && !current.endsWith("\n") ? "\n\n" : current.length > 0 ? "\n" : "";
+  await fs.writeFile(absolute, `${current}${separator}${normalizeText(addition)}`, { encoding: "utf8", mode: 0o600 });
+  tryChmod(absolute, 0o600);
+  audit(runtime, { actor, sessionId, operation: "append_note", result: "ok", details: { notePath: normalized } });
+  return readNote(runtime, normalized);
+}
+export async function getNoteStats(runtime) {
+  const files = await collectFiles(runtime.notesDir, { maxFiles: runtime.config.maxFiles, maxFileBytes: runtime.config.maxFileBytes });
+  const notes = files.filter((entry) => NOTE_EXTENSIONS.has(entry.extension));
+  return { directory: "notes", count: notes.length, bytes: notes.reduce((sum, note) => sum + note.stat.size, 0) };
+}
+function hasTable(runtime, tableName) {
+  return Boolean(runtime.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`).get(tableName));
+}
+function noteSlug(value) {
+  const slug = String(value ?? "note").normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
+  return slug || "note";
+}
+function legacyNotePath(runtime, title, used) {
+  const base = noteSlug(title);
+  let candidate = `legacy/${base}.md`;
+  let suffix = 2;
+  while (used.has(candidate) || existsSync(path.join(runtime.notesDir, candidate))) {
+    candidate = `legacy/${base}-${suffix}.md`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+export function legacyNoteSummary(runtime) {
+  const cases = hasTable(runtime, "cases") ? runtime.db.prepare(`SELECT title FROM cases ORDER BY created_at`).all() : [];
+  const knowledge = hasTable(runtime, "knowledge_notes") ? runtime.db.prepare(`SELECT title FROM knowledge_notes ORDER BY created_at`).all() : [];
+  return { caseCount: cases.length, knowledgeCount: knowledge.length, titles: [...cases, ...knowledge].map((row) => row.title).filter(Boolean) };
+}
+export async function exportLegacyToNotes(runtime, { actor = "assistant", sessionId = null } = {}) {
+  const summary = legacyNoteSummary(runtime);
+  if (summary.caseCount === 0 && summary.knowledgeCount === 0) return { created: [], skipped: [], summary };
+  ensurePrivateDirectory(path.join(runtime.notesDir, "legacy"));
+  const used = new Set();
+  const created = [];
+  const skipped = [];
+  const caseRows = hasTable(runtime, "cases") ? runtime.db.prepare(`SELECT * FROM cases ORDER BY created_at`).all() : [];
+  for (const record of caseRows) {
+    const notePath = legacyNotePath(runtime, record.title, used);
+    const lines = [`# ${record.title}`, "", record.description || "(no description recorded)", "", "## Open items", ""];
+    const tasks = hasTable(runtime, "tasks") ? runtime.db.prepare(`SELECT * FROM tasks WHERE case_id = ? ORDER BY created_at`).all(record.id) : [];
+    if (tasks.length) {
+      for (const task of tasks) lines.push(`- [${task.status === "done" ? "x" : " "}] ${task.title}${task.description ? ` — ${task.description}` : ""}${task.due_date ? ` (previous due date: ${task.due_date})` : ""}`);
+    } else {
+      lines.push("- No checklist items were recorded.");
+    }
+    if (hasTable(runtime, "case_documents")) {
+      const documents = runtime.db.prepare(`SELECT d.relative_path FROM case_documents cd JOIN documents d ON d.id = cd.document_id WHERE cd.case_id = ? ORDER BY cd.linked_at`).all(record.id);
+      if (documents.length) {
+        lines.push("", "## Related documents", "");
+        for (const document of documents) lines.push(`- ${document.relative_path}`);
+      }
+    }
+    const target = path.join(runtime.notesDir, notePath);
+    await fs.writeFile(target, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+    tryChmod(target, 0o600);
+    created.push(notePath);
+  }
+  if (hasTable(runtime, "knowledge_notes")) {
+    const knowledgeRows = runtime.db.prepare(`SELECT * FROM knowledge_notes ORDER BY created_at`).all();
+    for (const record of knowledgeRows) {
+      const notePath = legacyNotePath(runtime, record.title, used);
+      const lines = [`# ${record.title}`, "", record.summary || "", "", record.body || "", "", "## Sources", ""];
+      if (hasTable(runtime, "knowledge_sources")) {
+        const sources = runtime.db.prepare(`SELECT * FROM knowledge_sources WHERE note_id = ? ORDER BY accessed_at`).all(record.id);
+        for (const source of sources) lines.push(`- ${source.title}${source.url ? ` — ${source.url}` : ""}${source.quote ? ` — \"${source.quote.replaceAll(/\s+/g, " ")}\"` : ""}`);
+      }
+      const target = path.join(runtime.notesDir, notePath);
+      await fs.writeFile(target, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+      tryChmod(target, 0o600);
+      created.push(notePath);
+    }
+  }
+  audit(runtime, { actor, sessionId, operation: "export_legacy_to_notes", result: "ok", details: { createdCount: created.length } });
+  return { created, skipped, summary };
+}
+
+
+
 function initializeSchema(db) {
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -264,85 +443,6 @@ function initializeSchema(db) {
       title,
       content
     );
-    CREATE TABLE IF NOT EXISTS cases (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'open',
-      due_date TEXT,
-      tags_json TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      closed_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS cases_status_idx ON cases(status, due_date);
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      case_id TEXT,
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'open',
-      priority TEXT NOT NULL DEFAULT 'normal',
-      due_date TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      completed_at TEXT,
-      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE SET NULL
-    );
-    CREATE INDEX IF NOT EXISTS tasks_case_idx ON tasks(case_id, status, due_date);
-    CREATE TABLE IF NOT EXISTS case_documents (
-      case_id TEXT NOT NULL,
-      document_id TEXT NOT NULL,
-      relation TEXT NOT NULL DEFAULT 'evidence',
-      note TEXT NOT NULL DEFAULT '',
-      linked_at TEXT NOT NULL,
-      PRIMARY KEY(case_id, document_id),
-      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
-      FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS case_documents_document_idx ON case_documents(document_id);
-    CREATE TABLE IF NOT EXISTS knowledge_notes (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      summary TEXT NOT NULL DEFAULT '',
-      body TEXT NOT NULL,
-      jurisdiction TEXT NOT NULL DEFAULT '',
-      topic TEXT NOT NULL DEFAULT '',
-      tags_json TEXT NOT NULL DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'draft',
-      markdown_path TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS knowledge_notes_status_idx ON knowledge_notes(status, updated_at);
-    CREATE TABLE IF NOT EXISTS knowledge_sources (
-      id TEXT PRIMARY KEY,
-      note_id TEXT NOT NULL,
-      url TEXT,
-      title TEXT NOT NULL,
-      publisher TEXT NOT NULL DEFAULT '',
-      source_type TEXT NOT NULL DEFAULT 'other',
-      accessed_at TEXT NOT NULL,
-      published_at TEXT,
-      quote TEXT NOT NULL DEFAULT '',
-      relevance TEXT NOT NULL DEFAULT '',
-      confidence TEXT NOT NULL DEFAULT 'medium',
-      document_id TEXT,
-      FOREIGN KEY(note_id) REFERENCES knowledge_notes(id) ON DELETE CASCADE,
-      FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE SET NULL
-    );
-    CREATE INDEX IF NOT EXISTS knowledge_sources_note_idx ON knowledge_sources(note_id);
-    CREATE TABLE IF NOT EXISTS case_knowledge (
-      case_id TEXT NOT NULL,
-      note_id TEXT NOT NULL,
-      relation TEXT NOT NULL DEFAULT 'research',
-      note TEXT NOT NULL DEFAULT '',
-      linked_at TEXT NOT NULL,
-      PRIMARY KEY(case_id, note_id),
-      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
-      FOREIGN KEY(note_id) REFERENCES knowledge_notes(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS case_knowledge_note_idx ON case_knowledge(note_id);
     CREATE TABLE IF NOT EXISTS audit_events (
       id TEXT PRIMARY KEY,
       timestamp TEXT NOT NULL,
@@ -422,12 +522,13 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
   const extractedDir = path.join(dataDir, "extracted");
   ensurePrivateDirectory(privateDocumentsDir);
   ensurePrivateDirectory(extractedDir);
-  const knowledgeDir = path.join(dataDir, "knowledge");
-  ensurePrivateDirectory(knowledgeDir);
+  const notesDir = path.join(dataDir, "notes");
+  ensurePrivateDirectory(notesDir);
   if (!roots.some((root) => root.absolute === privateDocumentsDir)) {
     roots.push({ configured: "<private-documents>", absolute: privateDocumentsDir, label: "private-documents", exists: true, private: true });
   }
   const dbPath = path.join(dataDir, "documents.sqlite");
+  const auditPath = path.join(dataDir, "audit.ndjson");
   const db = new DatabaseSync(dbPath);
   initializeSchema(db);
   tryChmod(dbPath, 0o600);
@@ -438,7 +539,8 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
     dataDir,
     privateDocumentsDir,
     extractedDir,
-    knowledgeDir,
+    notesDir,
+    auditPath,
     dbPath,
     db,
     close() {
@@ -474,8 +576,15 @@ function publicDocument(row, runtime) {
 }
 
 function audit(runtime, { actor = "assistant", sessionId = null, operation, result, documentId = null, details = {} }) {
+  const event = { id: `a_${randomUUID()}`, timestamp: isoNow(), actor, operation, result, documentId, details };
   runtime.db.prepare(`INSERT INTO audit_events (id,timestamp,actor,session_id,operation,result,document_id,details_json) VALUES (?,?,?,?,?,?,?,?)`)
-    .run(`a_${randomUUID()}`, isoNow(), actor, sessionId, operation, result, documentId, safeJson(details));
+    .run(event.id, event.timestamp, event.actor, sessionId, event.operation, event.result, event.documentId, safeJson(event.details));
+  try {
+    appendFileSync(runtime.auditPath, `${JSON.stringify({ ...event, sessionId })}\n`, { encoding: "utf8", mode: 0o600 });
+    tryChmod(runtime.auditPath, 0o600);
+  } catch {
+    // The derived database audit remains available if the portable audit log cannot be written.
+  }
   hardenDatabaseFiles(runtime.dbPath);
 }
 
@@ -676,19 +785,13 @@ export async function getDocument(runtime, documentId, { includeContent = true, 
 export function getStatus(runtime) {
   const counts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM documents GROUP BY status`).all();
   const proposals = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM proposals GROUP BY status`).all();
-    const caseCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM cases GROUP BY status`).all();
-    const taskCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM tasks GROUP BY status`).all();
-    const knowledgeCounts = runtime.db.prepare(`SELECT status, COUNT(*) AS count FROM knowledge_notes GROUP BY status`).all();
   return {
-    dataClass: "C2 document metadata/content",
-    storage: "private local SQLite outside the project tree",
+    dataClass: "C2 document metadata/content; canonical notes are local text files",
+    storage: "canonical notes and audit log in the private data directory; SQLite is a derived cache",
     roots: runtime.roots.map((root) => ({ label: root.label, exists: root.exists, status: root.error ? "error" : root.exists ? "ready" : "missing" })),
     documents: Object.fromEntries(counts.map((row) => [row.status, row.count])),
     proposals: Object.fromEntries(proposals.map((row) => [row.status, row.count])),
-    cases: Object.fromEntries(caseCounts.map((row) => [row.status, row.count])),
-    tasks: Object.fromEntries(taskCounts.map((row) => [row.status, row.count])),
-    knowledge: Object.fromEntries(knowledgeCounts.map((row) => [row.status, row.count])),
-    capabilities: ["read", "search", "index", "propose-local-change", "confirm-local-change", "local-cases", "local-tasks", "document-links"],
+    capabilities: ["read", "search", "index", "notes", "propose-local-change", "confirm-local-change"],
     prohibited: ["public-share", "remote-write", "delete", "browser-automation"],
   };
 }
@@ -706,349 +809,6 @@ export function listAudit(runtime, { limit = 20 } = {}) {
   }));
 }
 
-const CASE_STATUSES = new Set(["open", "waiting", "submitted", "closed", "archived"]);
-const TASK_STATUSES = new Set(["open", "in_progress", "waiting", "done", "cancelled"]);
-const TASK_PRIORITIES = new Set(["low", "normal", "high"]);
-const CASE_DOCUMENT_RELATIONS = new Set(["requirement", "evidence", "submission", "response", "other"]);
-
-function optionalDate(value, fieldName) {
-  if (value === undefined || value === null || value === "") return null;
-  const text = String(value).trim();
-  if (!/^\d{4}-\d{2}-\d{2}(?:T[^\s]+)?$/.test(text)) throw new Error(`${fieldName} must be YYYY-MM-DD or an ISO date-time`);
-  return text;
-}
-
-function requiredShortText(value, fieldName, maxLength) {
-  const text = String(value ?? "").trim();
-  if (!text) throw new Error(`${fieldName} is required`);
-  if (text.length > maxLength) throw new Error(`${fieldName} is too long`);
-  return text;
-}
-
-function optionalLongText(value, fieldName, maxLength) {
-  const text = String(value ?? "").trim();
-  if (text.length > maxLength) throw new Error(`${fieldName} is too long`);
-  return text;
-}
-
-function normalizeTags(tags) {
-  if (!Array.isArray(tags)) return [];
-  const normalized = [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))].slice(0, 20);
-  if (normalized.some((tag) => tag.length > 60)) throw new Error("tag is too long");
-  return normalized;
-}
-
-function publicCase(row) {
-  return {
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    status: row.status,
-    dueDate: row.due_date,
-    tags: JSON.parse(row.tags_json || "[]"),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    closedAt: row.closed_at,
-  };
-}
-
-function publicTask(row) {
-  return {
-    id: row.id,
-    caseId: row.case_id,
-    title: row.title,
-    description: row.description,
-    status: row.status,
-    priority: row.priority,
-    dueDate: row.due_date,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.completed_at,
-  };
-}
-
-function getCaseRow(runtime, caseId) {
-  const row = runtime.db.prepare(`SELECT * FROM cases WHERE id = ?`).get(caseId);
-  if (!row) throw new Error("case not found");
-  return row;
-}
-
-function getTaskRow(runtime, taskId) {
-  const row = runtime.db.prepare(`SELECT * FROM tasks WHERE id = ?`).get(taskId);
-  if (!row) throw new Error("task not found");
-  return row;
-}
-
-export function createCase(runtime, { title, description = "", dueDate, tags = [], actor = "assistant", sessionId = null } = {}) {
-  const cleanTitle = requiredShortText(title, "case title", 200);
-  const cleanDescription = optionalLongText(description, "case description", 5_000);
-  const cleanDueDate = optionalDate(dueDate, "case due date");
-  const cleanTags = normalizeTags(tags);
-  const now = isoNow();
-  const id = `case_${randomUUID()}`;
-  runtime.db.prepare(`INSERT INTO cases (id,title,description,status,due_date,tags_json,created_at,updated_at,closed_at) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(id, cleanTitle, cleanDescription, "open", cleanDueDate, safeJson(cleanTags), now, now, null);
-  audit(runtime, { actor, sessionId, operation: "create_case", result: "ok", details: { caseId: id } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return publicCase(getCaseRow(runtime, id));
-}
-
-export function listCases(runtime, { status, limit = 50, actor = "assistant", sessionId = null } = {}) {
-  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
-  let rows;
-  if (status) {
-    if (!CASE_STATUSES.has(status)) throw new Error("unsupported case status");
-    rows = runtime.db.prepare(`SELECT * FROM cases WHERE status = ? ORDER BY COALESCE(due_date, '9999-12-31'), updated_at DESC LIMIT ?`).all(status, boundedLimit);
-  } else {
-    rows = runtime.db.prepare(`SELECT * FROM cases ORDER BY CASE status WHEN 'closed' THEN 1 ELSE 0 END, COALESCE(due_date, '9999-12-31'), updated_at DESC LIMIT ?`).all(boundedLimit);
-  }
-  const result = rows.map(publicCase);
-  audit(runtime, { actor, sessionId, operation: "list_cases", result: "ok", details: { count: result.length } });
-  return result;
-}
-
-export function updateCase(runtime, { caseId, title, description, status, dueDate, tags, actor = "assistant", sessionId = null } = {}) {
-  const current = getCaseRow(runtime, caseId);
-  const assignments = [];
-  const values = [];
-  if (title !== undefined) { assignments.push("title = ?"); values.push(requiredShortText(title, "case title", 200)); }
-  if (description !== undefined) { assignments.push("description = ?"); values.push(optionalLongText(description, "case description", 5_000)); }
-  if (status !== undefined) { if (!CASE_STATUSES.has(status)) throw new Error("unsupported case status"); assignments.push("status = ?"); values.push(status); }
-  if (dueDate !== undefined) { assignments.push("due_date = ?"); values.push(optionalDate(dueDate, "case due date")); }
-  if (tags !== undefined) { assignments.push("tags_json = ?"); values.push(safeJson(normalizeTags(tags))); }
-  if (assignments.length === 0) throw new Error("no case changes supplied");
-  const now = isoNow();
-  assignments.push("updated_at = ?"); values.push(now);
-  if (status === "closed") { assignments.push("closed_at = ?"); values.push(now); } else if (status !== undefined) { assignments.push("closed_at = ?"); values.push(null); }
-  values.push(caseId);
-  runtime.db.prepare(`UPDATE cases SET ${assignments.join(", ")} WHERE id = ?`).run(...values);
-  audit(runtime, { actor, sessionId, operation: "update_case", result: "ok", details: { caseId, fromStatus: current.status, toStatus: status ?? current.status } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return publicCase(getCaseRow(runtime, caseId));
-}
-
-export function createTask(runtime, { caseId = null, title, description = "", dueDate, priority = "normal", actor = "assistant", sessionId = null } = {}) {
-  const cleanTitle = requiredShortText(title, "task title", 240);
-  const cleanDescription = optionalLongText(description, "task description", 5_000);
-  if (caseId !== null) getCaseRow(runtime, caseId);
-  if (!TASK_PRIORITIES.has(priority)) throw new Error("unsupported task priority");
-  const cleanDueDate = optionalDate(dueDate, "task due date");
-  const now = isoNow();
-  const id = `task_${randomUUID()}`;
-  runtime.db.prepare(`INSERT INTO tasks (id,case_id,title,description,status,priority,due_date,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, caseId, cleanTitle, cleanDescription, "open", priority, cleanDueDate, now, now, null);
-  audit(runtime, { actor, sessionId, operation: "create_task", result: "ok", details: { taskId: id, caseId } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return publicTask(getTaskRow(runtime, id));
-}
-
-export function listTasks(runtime, { caseId, status, limit = 100, actor = "assistant", sessionId = null } = {}) {
-  const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 100));
-  const clauses = [];
-  const values = [];
-  if (caseId !== undefined && caseId !== null) { getCaseRow(runtime, caseId); clauses.push("case_id = ?"); values.push(caseId); }
-  if (status) { if (!TASK_STATUSES.has(status)) throw new Error("unsupported task status"); clauses.push("status = ?"); values.push(status); }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  values.push(boundedLimit);
-  const result = runtime.db.prepare(`SELECT * FROM tasks ${where} ORDER BY CASE status WHEN 'done' THEN 1 WHEN 'cancelled' THEN 2 ELSE 0 END, COALESCE(due_date, '9999-12-31'), updated_at DESC LIMIT ?`).all(...values).map(publicTask);
-  audit(runtime, { actor, sessionId, operation: "list_tasks", result: "ok", details: { count: result.length, caseId: caseId ?? null } });
-  return result;
-}
-
-export function updateTask(runtime, { taskId, title, description, status, dueDate, priority, actor = "assistant", sessionId = null } = {}) {
-  const current = getTaskRow(runtime, taskId);
-  const assignments = [];
-  const values = [];
-  if (title !== undefined) { assignments.push("title = ?"); values.push(requiredShortText(title, "task title", 240)); }
-  if (description !== undefined) { assignments.push("description = ?"); values.push(optionalLongText(description, "task description", 5_000)); }
-  if (status !== undefined) { if (!TASK_STATUSES.has(status)) throw new Error("unsupported task status"); assignments.push("status = ?"); values.push(status); }
-  if (dueDate !== undefined) { assignments.push("due_date = ?"); values.push(optionalDate(dueDate, "task due date")); }
-  if (priority !== undefined) { if (!TASK_PRIORITIES.has(priority)) throw new Error("unsupported task priority"); assignments.push("priority = ?"); values.push(priority); }
-  if (assignments.length === 0) throw new Error("no task changes supplied");
-  const now = isoNow();
-  assignments.push("updated_at = ?"); values.push(now);
-  if (status === "done") { assignments.push("completed_at = ?"); values.push(now); } else if (status !== undefined) { assignments.push("completed_at = ?"); values.push(null); }
-  values.push(taskId);
-  runtime.db.prepare(`UPDATE tasks SET ${assignments.join(", ")} WHERE id = ?`).run(...values);
-  audit(runtime, { actor, sessionId, operation: "update_task", result: "ok", details: { taskId, fromStatus: current.status, toStatus: status ?? current.status } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return publicTask(getTaskRow(runtime, taskId));
-}
-
-export function linkDocumentToCase(runtime, { caseId, documentId, relation = "evidence", note = "", actor = "assistant", sessionId = null } = {}) {
-  getCaseRow(runtime, caseId);
-  const document = runtime.db.prepare(`SELECT * FROM documents WHERE id = ? AND status = 'active'`).get(documentId);
-  if (!document) throw new Error("active document not found");
-  if (!CASE_DOCUMENT_RELATIONS.has(relation)) throw new Error("unsupported document relation");
-  const cleanNote = optionalLongText(note, "link note", 2_000);
-  runtime.db.prepare(`INSERT INTO case_documents (case_id,document_id,relation,note,linked_at) VALUES (?,?,?,?,?) ON CONFLICT(case_id,document_id) DO UPDATE SET relation=excluded.relation,note=excluded.note,linked_at=excluded.linked_at`)
-    .run(caseId, documentId, relation, cleanNote, isoNow());
-  audit(runtime, { actor, sessionId, operation: "link_document_to_case", result: "ok", documentId, details: { caseId, relation } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return { caseId, document: publicDocument(document, runtime), relation, note: cleanNote };
-}
-
-export function getCaseSummary(runtime, caseId, { actor = "assistant", sessionId = null } = {}) {
-  const current = getCaseRow(runtime, caseId);
-  const tasks = runtime.db.prepare(`SELECT * FROM tasks WHERE case_id = ? ORDER BY CASE status WHEN 'done' THEN 1 WHEN 'cancelled' THEN 2 ELSE 0 END, COALESCE(due_date, '9999-12-31'), updated_at DESC`).all(caseId).map(publicTask);
-  const documents = runtime.db.prepare(`SELECT d.*, cd.relation, cd.note, cd.linked_at FROM case_documents cd JOIN documents d ON d.id = cd.document_id WHERE cd.case_id = ? AND d.status != 'missing' ORDER BY cd.linked_at DESC`).all(caseId).map((row) => ({ ...publicDocument(row, runtime), relation: row.relation, note: row.note, linkedAt: row.linked_at }));
-  const knowledge = runtime.db.prepare(`SELECT kn.*, ck.relation, ck.note AS link_note, ck.linked_at FROM case_knowledge ck JOIN knowledge_notes kn ON kn.id = ck.note_id WHERE ck.case_id = ? ORDER BY ck.linked_at DESC`).all(caseId).map((row) => ({ ...publicKnowledgeNote(row), relation: row.relation, note: row.link_note, linkedAt: row.linked_at }));
-  const result = { case: publicCase(current), tasks, documents, knowledge };
-  audit(runtime, { actor, sessionId, operation: "get_case_summary", result: "ok", details: { caseId, taskCount: tasks.length, documentCount: documents.length, knowledgeCount: knowledge.length } });
-  return result;
-}
-const KNOWLEDGE_SOURCE_TYPES = new Set(["official", "contract", "user_document", "secondary", "other"]);
-const KNOWLEDGE_CONFIDENCE = new Set(["high", "medium", "low"]);
-const KNOWLEDGE_RELATIONS = new Set(["research", "requirement", "decision", "other"]);
-
-function publicKnowledgeNote(row) {
-  return {
-    id: row.id,
-    title: row.title,
-    summary: row.summary,
-    jurisdiction: row.jurisdiction,
-    topic: row.topic,
-    tags: JSON.parse(row.tags_json || "[]"),
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function publicKnowledgeSource(row) {
-  return {
-    id: row.id,
-    url: row.url,
-    title: row.title,
-    publisher: row.publisher,
-    sourceType: row.source_type,
-    accessedAt: row.accessed_at,
-    publishedAt: row.published_at,
-    quote: row.quote,
-    relevance: row.relevance,
-    confidence: row.confidence,
-    documentId: row.document_id,
-  };
-}
-
-function validateKnowledgeSource(runtime, source) {
-  const title = requiredShortText(source.title, "source title", 240);
-  const url = source.url ? String(source.url).trim() : null;
-  if (url && !/^https?:\/\//i.test(url)) throw new Error("knowledge source URL must use http or https");
-  const sourceType = source.sourceType ?? "other";
-  if (!KNOWLEDGE_SOURCE_TYPES.has(sourceType)) throw new Error("unsupported knowledge source type");
-  const confidence = source.confidence ?? "medium";
-  if (!KNOWLEDGE_CONFIDENCE.has(confidence)) throw new Error("unsupported knowledge confidence");
-  const documentId = source.documentId ?? null;
-  if (!url && !documentId) throw new Error("knowledge source needs a URL or documentId");
-  if (documentId) {
-    const document = runtime.db.prepare(`SELECT id FROM documents WHERE id = ? AND status = 'active'`).get(documentId);
-    if (!document) throw new Error("knowledge source document not found");
-  }
-  return {
-    url,
-    title,
-    publisher: optionalLongText(source.publisher, "source publisher", 240),
-    sourceType,
-    accessedAt: optionalDate(source.accessedAt ?? isoNow(), "source accessedAt") ?? isoNow(),
-    publishedAt: optionalDate(source.publishedAt, "source publishedAt"),
-    quote: optionalLongText(source.quote, "source quote", 5_000),
-    relevance: optionalLongText(source.relevance, "source relevance", 1_000),
-    confidence,
-    documentId,
-  };
-}
-
-function writeKnowledgeMarkdown(runtime, note, sources) {
-  const lines = [
-    `# ${note.title}`,
-    "",
-    `- Note ID: ${note.id}`,
-    `- Jurisdiction: ${note.jurisdiction || "unspecified"}`,
-    `- Topic: ${note.topic || "unspecified"}`,
-    `- Status: ${note.status}`,
-    `- Updated: ${note.updatedAt}`,
-    "",
-    "## Summary",
-    note.summary || "(no summary)",
-    "",
-    "## Research note",
-    note.body,
-    "",
-    "## Sources",
-    ...sources.map((source) => `- ${source.title}${source.url ? ` — ${source.url}` : ""} (${source.sourceType}, confidence: ${source.confidence}, accessed: ${source.accessedAt})${source.quote ? ` [quote: ${source.quote.replaceAll(/\s+/g, " ")}]` : ""}`),
-    "",
-    "This note is research evidence, not legal, tax, medical, or financial advice.",
-    "",
-  ];
-  return lines.join("\n");
-}
-
-export async function recordKnowledgeNote(runtime, { title, summary = "", body, jurisdiction = "", topic = "", tags = [], status = "draft", caseId = null, sources = [], actor = "assistant", sessionId = null } = {}) {
-  const cleanTitle = requiredShortText(title, "knowledge note title", 240);
-  const cleanSummary = optionalLongText(summary, "knowledge note summary", 5_000);
-  const cleanBody = requiredShortText(body, "knowledge note body", 30_000);
-  if (!["draft", "reviewed", "superseded"].includes(status)) throw new Error("unsupported knowledge note status");
-  if (caseId) getCaseRow(runtime, caseId);
-  if (!Array.isArray(sources) || sources.length > 20) throw new Error("knowledge note has too many sources");
-  const cleanSources = sources.map((source) => validateKnowledgeSource(runtime, source));
-  const now = isoNow();
-  const id = `note_${randomUUID()}`;
-  const cleanTags = normalizeTags(tags);
-  const markdownPath = path.join(runtime.knowledgeDir, `${id}.md`);
-  const note = { id, title: cleanTitle, summary: cleanSummary, body: cleanBody, jurisdiction: optionalLongText(jurisdiction, "jurisdiction", 160), topic: optionalLongText(topic, "topic", 240), tags: cleanTags, status, updatedAt: now };
-  ensurePrivateDirectory(runtime.knowledgeDir);
-  await fs.writeFile(markdownPath, writeKnowledgeMarkdown(runtime, note, cleanSources), { encoding: "utf8", mode: 0o600 });
-  runtime.db.prepare(`INSERT INTO knowledge_notes (id,title,summary,body,jurisdiction,topic,tags_json,status,markdown_path,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, cleanTitle, cleanSummary, cleanBody, note.jurisdiction, note.topic, safeJson(cleanTags), status, path.relative(runtime.dataDir, markdownPath).replaceAll(path.sep, "/"), now, now);
-  for (const source of cleanSources) {
-    runtime.db.prepare(`INSERT INTO knowledge_sources (id,note_id,url,title,publisher,source_type,accessed_at,published_at,quote,relevance,confidence,document_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(`source_${randomUUID()}`, id, source.url, source.title, source.publisher, source.sourceType, source.accessedAt, source.publishedAt, source.quote, source.relevance, source.confidence, source.documentId);
-  }
-  if (caseId) {
-    runtime.db.prepare(`INSERT INTO case_knowledge (case_id,note_id,relation,note,linked_at) VALUES (?,?,?,?,?)`).run(caseId, id, "research", "", now);
-  }
-  audit(runtime, { actor, sessionId, operation: "record_knowledge_note", result: "ok", details: { noteId: id, sourceCount: cleanSources.length, caseId: caseId ?? null, status } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return { note: publicKnowledgeNote(runtime.db.prepare(`SELECT * FROM knowledge_notes WHERE id = ?`).get(id)), sources: cleanSources, caseId };
-}
-
-export function listKnowledgeNotes(runtime, { query = "", caseId, status, limit = 50, actor = "assistant", sessionId = null } = {}) {
-  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
-  const clauses = [];
-  const values = [];
-  if (query) { clauses.push("(kn.title LIKE ? OR kn.summary LIKE ? OR kn.topic LIKE ? OR kn.body LIKE ?)"); const pattern = `%${String(query).trim()}%`; values.push(pattern, pattern, pattern, pattern); }
-  if (caseId) { getCaseRow(runtime, caseId); clauses.push("EXISTS (SELECT 1 FROM case_knowledge ck WHERE ck.note_id = kn.id AND ck.case_id = ?)"); values.push(caseId); }
-  if (status) { if (!["draft", "reviewed", "superseded"].includes(status)) throw new Error("unsupported knowledge note status"); clauses.push("kn.status = ?"); values.push(status); }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  values.push(boundedLimit);
-  const notes = runtime.db.prepare(`SELECT kn.* FROM knowledge_notes kn ${where} ORDER BY kn.updated_at DESC LIMIT ?`).all(...values).map(publicKnowledgeNote);
-  audit(runtime, { actor, sessionId, operation: "list_knowledge_notes", result: "ok", details: { count: notes.length } });
-  return notes;
-}
-
-export function getKnowledgeNote(runtime, noteId, { actor = "assistant", sessionId = null } = {}) {
-  const row = runtime.db.prepare(`SELECT * FROM knowledge_notes WHERE id = ?`).get(noteId);
-  if (!row) throw new Error("knowledge note not found");
-  const sources = runtime.db.prepare(`SELECT * FROM knowledge_sources WHERE note_id = ? ORDER BY accessed_at DESC`).all(noteId).map(publicKnowledgeSource);
-  const links = runtime.db.prepare(`SELECT case_id, relation, note, linked_at FROM case_knowledge WHERE note_id = ? ORDER BY linked_at DESC`).all(noteId);
-  const result = { note: publicKnowledgeNote(row), body: row.body, sources, caseLinks: links };
-  audit(runtime, { actor, sessionId, operation: "read_knowledge_note", result: "ok", details: { noteId, sourceCount: sources.length } });
-  return result;
-}
-
-export function linkKnowledgeToCase(runtime, { caseId, noteId, relation = "research", note = "", actor = "assistant", sessionId = null } = {}) {
-  getCaseRow(runtime, caseId);
-  const knowledge = runtime.db.prepare(`SELECT id FROM knowledge_notes WHERE id = ?`).get(noteId);
-  if (!knowledge) throw new Error("knowledge note not found");
-  if (!KNOWLEDGE_RELATIONS.has(relation)) throw new Error("unsupported knowledge relation");
-  const cleanNote = optionalLongText(note, "knowledge link note", 2_000);
-  const now = isoNow();
-  runtime.db.prepare(`INSERT INTO case_knowledge (case_id,note_id,relation,note,linked_at) VALUES (?,?,?,?,?) ON CONFLICT(case_id,note_id) DO UPDATE SET relation=excluded.relation,note=excluded.note,linked_at=excluded.linked_at`).run(caseId, noteId, relation, cleanNote, now);
-  audit(runtime, { actor, sessionId, operation: "link_knowledge_to_case", result: "ok", details: { caseId, noteId, relation } });
-  hardenDatabaseFiles(runtime.dbPath);
-  return { caseId, noteId, relation, note: cleanNote, linkedAt: now };
-}
 
 
 
@@ -1159,5 +919,5 @@ export async function applyDocumentProposal(runtime, proposalId, { confirm, acto
 }
 
 export function runtimeInfo(runtime) {
-  return { cwd: runtime.cwd, dbPath: runtime.dbPath, dataDir: runtime.dataDir, roots: runtime.roots };
+  return { cwd: runtime.cwd, dbPath: runtime.dbPath, auditPath: runtime.auditPath, dataDir: runtime.dataDir, notesDir: runtime.notesDir, roots: runtime.roots };
 }

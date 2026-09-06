@@ -1,19 +1,20 @@
 # Changelog
 
-## 0.2.0 — Case research and evidence
+## 0.3.0 — Portable note workspace
 
-- Added private knowledge notes with jurisdiction, confidence, access dates, bounded source quotes, and source links.
-- Added case-linked research evidence tools and prompts for public information gathering.
-- Added explicit guidance to separate authoritative facts, interpretation, assumptions, and professional-review questions.
+- Replaced the ticket-like case/task/research-record workflow with a Zettelkasten-style free-form note workspace.
+- Added canonical Markdown/Org/text notes with human-readable paths and direct file search.
+- Made the SQLite database a disposable derived cache; notes remain readable and searchable after cache deletion and rebuild.
+- Added a portable redacted `audit.ndjson` log and serialized confirmation prompts to prevent concurrent tool-call hangs.
+
+## 0.2.0 — Historical structured research layer
+
+- Added an earlier structured research-evidence layer; it is no longer the normal user-facing workflow.
 
 ## 0.1.0 — Stage 1 template
 
-- Local-only document indexing and bounded full-text search.
-- PDF/text/XML/EDM/ZIP extraction paths.
-- Hashes, metadata, duplicate detection, stale-source detection, and redacted audit events.
+- Local-only document indexing, bounded extraction, hashes, metadata, duplicate detection, stale-source detection, and redacted audit events.
 - Confirmation-gated document rename/move/tag proposals.
-- User-confirmed import of external local documents into the private data store.
-- Private local document cases, checklist tasks, due dates, linked documents, statuses, and closure tracking.
-- Private research/knowledge notes with bounded citations, confidence, jurisdiction, and case links.
+- User-confirmed import of external local documents into private storage.
 - Synthetic fixtures, schemas, skills, prompts, policy checks, permission checks, and offline tests.
 - No remote connector, public sharing, banking, health, or calendar write integration.

@@ -1,6 +1,6 @@
 {
   "name": "personal-pi-assistant",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Privacy-conscious local personal assistant project for Pi; Stage 1 document management.",
