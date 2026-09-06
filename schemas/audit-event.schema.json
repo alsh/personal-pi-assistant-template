@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-assistant.invalid/schemas/audit-event.schema.json",
+  "title": "Redacted document assistant audit event",
+  "type": "object",
+  "required": ["id", "timestamp", "actor", "operation", "result"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "actor": { "enum": ["assistant", "user", "connector", "system"] },
+    "sessionId": { "type": ["string", "null"] },
+    "operation": { "type": "string" },
+    "result": { "type": "string" },
+    "documentId": { "type": ["string", "null"] },
+    "details": { "type": "object" }
+  },
+  "additionalProperties": false
+}

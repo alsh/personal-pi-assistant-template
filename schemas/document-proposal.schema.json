@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-assistant.invalid/schemas/document-proposal.schema.json",
+  "title": "Local document proposal",
+  "type": "object",
+  "required": ["proposalId", "operation", "document", "sourceHash", "expiresAt", "requiresConfirmation"],
+  "properties": {
+    "proposalId": { "type": "string", "minLength": 1 },
+    "operation": { "enum": ["rename", "move", "tag"] },
+    "document": { "type": "object" },
+    "sourceHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "payload": { "type": "object" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "requiresConfirmation": { "const": true }
+  },
+  "additionalProperties": false
+}

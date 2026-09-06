@@ -1,0 +1,34 @@
+# Private personal-assistant state — never commit
+.data/
+data/
+vault-private/
+exports-private/
+backups/
+secrets/
+credentials/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jsonl
+.env
+.env.*
+!.env.example
+
+# Local Pi runtime/session state
+.pi/sessions/
+.pi/subagents/
+.pi/runtime/
+.pi/artifacts/
+.pi/credentials/
+
+# Local connector caches and generated indexes
+.cache/
+.cache-*/
+connectors/*/state/
+connectors/*/cache/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo

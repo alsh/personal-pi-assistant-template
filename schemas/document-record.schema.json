@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-assistant.invalid/schemas/document-record.schema.json",
+  "title": "Local document record",
+  "type": "object",
+  "required": ["id", "root", "relativePath", "contentHash", "indexedAt", "status"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "root": { "type": "string", "minLength": 1 },
+    "relativePath": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "extension": { "type": "string" },
+    "mimeType": { "type": "string" },
+    "size": { "type": "integer", "minimum": 0 },
+    "modifiedAt": { "type": "string", "format": "date-time" },
+    "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "title": { "type": "string" },
+    "extraction": { "type": "string" },
+    "metadata": { "type": "object" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "status": { "enum": ["active", "missing", "stale", "superseded"] },
+    "indexedAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true
+}

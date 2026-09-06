@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://personal-assistant.invalid/schemas/task-record.schema.json",
+  "title": "Local document case task",
+  "type": "object",
+  "required": ["id", "title", "status", "priority", "createdAt", "updatedAt"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^task_" },
+    "caseId": { "type": ["string", "null"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "description": { "type": "string", "maxLength": 5000 },
+    "status": { "enum": ["open", "in_progress", "waiting", "done", "cancelled"] },
+    "priority": { "enum": ["low", "normal", "high"] },
+    "dueDate": { "type": ["string", "null"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

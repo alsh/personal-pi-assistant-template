@@ -1,0 +1,17 @@
+{
+  "name": "personal-pi-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-conscious local personal assistant project for Pi; Stage 1 document management.",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node scripts/test-stage1.mjs",
+    "doctor": "./scripts/doctor.sh",
+    "check:policy": "./scripts/check-policy.sh",
+    "check:permissions": "./scripts/check-permissions.sh",
+    "check": "npm test && npm run check:policy && npm run check:permissions"
+  }
+}
