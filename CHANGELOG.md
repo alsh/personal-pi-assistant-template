@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 — Case research and evidence
+
+- Added private knowledge notes with jurisdiction, confidence, access dates, bounded source quotes, and source links.
+- Added case-linked research evidence tools and prompts for public information gathering.
+- Added explicit guidance to separate authoritative facts, interpretation, assumptions, and professional-review questions.
+
 ## 0.1.0 — Stage 1 template
 
 - Local-only document indexing and bounded full-text search.
