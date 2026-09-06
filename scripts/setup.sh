@@ -8,9 +8,11 @@
 #   - read credentials, browser profiles, or private documents;
 #   - enable write-capable remote connectors.
 #
-# Usage:
-# Workflow (the current directory is the default target):
+# Usage (after choosing an empty target directory):
 #   cd /path/to/empty-folder
+#   curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh | bash
+#
+# Reviewable equivalent:
 #   curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh \
 #     -o /tmp/personal-pi-setup.sh
 #   sed -n '1,260p' /tmp/personal-pi-setup.sh   # review before execution
@@ -19,7 +21,6 @@
 #
 # Optional local invocation with an explicit target:
 #   ./scripts/setup.sh /path/to/empty-folder
-#
 # The downloaded script should be reviewed before execution.
 
 set -euo pipefail

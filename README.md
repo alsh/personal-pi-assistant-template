@@ -17,16 +17,14 @@ The template has no active Google Drive, pCloud, calendar, health, finance, bank
 
 ## Anonymous setup
 
-The repository is public so a user does not need GitHub authentication to bootstrap it. Review the script before execution:
+The repository is public, so no GitHub authentication is needed. The simplest setup is below; review the script at the URL before executing it:
 
 ```bash
 cd /path/to/empty-folder
-curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh \
-  -o /tmp/personal-pi-setup.sh
-sed -n '1,260p' /tmp/personal-pi-setup.sh   # review before execution
-bash /tmp/personal-pi-setup.sh
-rm -f /tmp/personal-pi-setup.sh
+curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh | bash
 ```
+
+For a review-first run, download the same URL to a temporary file, inspect it, and execute it without a target argument while remaining in the target directory.
 
 The script requires Git and network access to GitHub. It does not install npm/system packages, read credentials, or connect accounts.
 
