@@ -102,21 +102,33 @@ branch="$(git branch --show-current)"
 printf 'remote=%s\nbranch=%s\n' "$remote" "$branch"
 
 # These checks are local and offline. They do not index any user documents.
+# Permission checks use a disposable sandbox rather than the main data root.
+sandbox="$(mktemp -d "${TMPDIR:-/tmp}/personal-assistant-setup.XXXXXX")"
+trap 'rm -rf "$sandbox"' EXIT
 ./scripts/doctor.sh
 npm test
+npm run test:package
 npm run check:policy
-npm run check:permissions
+PA_DATA_DIR="$sandbox/data" npm run check:permissions
 
 cat <<'EOF'
 
 Setup completed.
 
 Before using real documents:
-  1. Review .pi/settings.json, AGENTS.md, docs/policy.md, and docs/consent-matrix.md.
-  2. Restart Pi in this directory and review the project-trust prompt.
-  3. Run Pi with an explicit private document root, for example:
-       PA_DOCUMENT_ROOTS="$HOME/Documents/selected-folder" pi
-  4. Run /pa-status, then /pa-index.
+  1. Review AGENTS.md, docs/policy.md, and docs/consent-matrix.md.
+  2. Record this package path, then test it from a separate consumer/workspace:
+       package_path="$PWD"
+       PA_DATA_DIR="$(mktemp -d)" pi -e "$package_path" --no-session
+  3. For a persistent install, leave this package directory and run from the
+     separate consumer/workspace:
+       pi install "$package_path"
+     Use `pi install -l "$package_path"` only there; it writes that
+     consumer's `.pi/settings.json`, not package resources.
+  4. Set `PA_DOCUMENT_ROOTS` only to explicitly selected private roots after
+     review; the default package root remains synthetic fixtures.
+  5. Run /pa-status, then /pa-index after the package is loaded.
 
-No packages were installed, no credentials were read, and no remote account was connected.
+No extension was installed into the cloned package, no credentials were read,
+and no remote account was connected.
 EOF

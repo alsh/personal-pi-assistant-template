@@ -27,19 +27,26 @@ for cmd in "${optional[@]}"; do
   fi
 done
 
-printf '\nproject files\n'
+printf '\npackage files\n'
 for path in \
+  package.json \
+  personal-assistant.json \
+  extensions/personal-assistant.ts \
+  extensions/personal-assistant-core.mjs \
+  skills/note-workspace/SKILL.md \
+  prompts/note-intake.md \
   AGENTS.md \
-  .pi/settings.json \
-  .pi/APPEND_SYSTEM.md \
-  .pi/personal-assistant.json \
-  .pi/extensions/personal-assistant.ts \
-  .pi/extensions/personal-assistant-core.mjs \
   docs/policy.md \
   docs/consent-matrix.md \
   scripts/test-stage1.mjs; do
   if [[ -e "$root/$path" ]]; then printf '  OK   %s\n' "$path"; else printf '  MISS %s\n' "$path"; fi
 done
+
+if find "$root" -path "$root/.git" -prune -o -type d -name .pi -print -quit | grep -q .; then
+  echo '  FAIL .pi directory found in the package repository' >&2
+else
+  echo '  OK   no .pi directory in the package repository'
+fi
 
 printf '\nfixture files\n'
 find "$root/fixtures/documents" -type f -print 2>/dev/null | sed "s#^$root/##" | sort || true
@@ -54,5 +61,6 @@ cat <<'EOF'
 This doctor intentionally does not read credentials, browser profiles, private
 files, environment variable values, or connector endpoints. It does not log in,
 contact a service, or index documents. Run scripts/test-stage1.mjs for the
-offline synthetic test suite.
+offline synthetic test suite. Any `pi install -l` command belongs in a separate
+consumer workspace, not this package repository.
 EOF

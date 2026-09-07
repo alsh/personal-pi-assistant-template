@@ -15,6 +15,51 @@ A privacy-conscious local personal assistant project for [Pi](https://pi.dev).
 
 The template has no active Google Drive, pCloud, calendar, health, finance, banking, or public-sharing connector.
 
+## Pi package layout
+
+This repository is a distributable Pi package, not a Pi consumer project. Package
+resources stay at the top level:
+
+```text
+extensions/              extension source
+skills/                  skill definitions
+prompts/                 prompt templates
+personal-assistant.json  synthetic-default package configuration
+```
+
+The source package intentionally has no `.pi` directory and no installed copy of
+its extension. Pi project settings belong to a separate consumer/workspace. The
+anonymous `scripts/setup.sh` clone and its checks do not install the package into
+itself.
+
+For a temporary, no-install load, run Pi from a separate disposable sandbox and
+keep data there as well:
+
+```bash
+package=/path/to/personal-pi-assistant-template
+sandbox="$(mktemp -d)"
+PA_DATA_DIR="$sandbox/data" \
+PA_DOCUMENT_ROOTS="$package/fixtures/documents" \
+  pi -e "$package" --no-session
+rm -rf "$sandbox"
+```
+
+For a persistent install, leave the package directory and use a separate
+consumer/workspace:
+
+```bash
+package=/path/to/personal-pi-assistant-template
+consumer="$(mktemp -d)"
+cd "$consumer"
+pi install "$package"
+# `pi install -l "$package"` writes this consumer's .pi/settings.json.
+```
+
+Never run the consumer `pi install -l` command in the source package when you
+want its working tree to remain free of Pi project state. The package defaults
+to the committed synthetic fixtures; set `PA_DOCUMENT_ROOTS` explicitly before
+using real local roots, and keep `PA_DATA_DIR` outside the package.
+
 ## Anonymous setup
 
 The repository is public, so no GitHub authentication is needed. Review the script at the URL before executing it:
@@ -32,7 +77,11 @@ The script sets up the current directory by default and refuses non-empty direct
 cd /path/to/empty-folder
 ./scripts/doctor.sh
 npm test
-npm run check
+npm run test:package
+npm run check:policy
+PA_DATA_DIR="$(mktemp -d)" npm run check:permissions
+bash -n scripts/*.sh
+git diff --check
 ```
 
 Restart Pi, review project trust, and run it with an explicitly selected private document root:

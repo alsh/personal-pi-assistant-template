@@ -1,9 +1,30 @@
 {
   "name": "personal-pi-assistant",
   "version": "0.3.0",
-  "private": true,
   "type": "module",
-  "description": "Privacy-conscious local personal assistant project for Pi; Stage 1 document management.",
+  "description": "Privacy-conscious local personal assistant Pi package with note-first document tools.",
+  "keywords": [
+    "pi-package",
+    "personal-assistant",
+    "documents",
+    "zettelkasten"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
   "engines": {
     "node": ">=22.19"
   },
@@ -12,6 +33,7 @@
     "doctor": "./scripts/doctor.sh",
     "check:policy": "./scripts/check-policy.sh",
     "check:permissions": "./scripts/check-permissions.sh",
-    "check": "npm test && npm run check:policy && npm run check:permissions"
+    "check": "npm test && npm run check:policy && npm run check:permissions",
+    "test:package": "./scripts/test-package-smoke.sh"
   }
 }

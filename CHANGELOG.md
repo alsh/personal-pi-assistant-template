@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Distributable Pi package layout
+
+- Moved extension code, skills, prompts, and synthetic-default configuration to top-level package resources.
+- Added a valid Pi package manifest with the `pi-package` keyword and peer declarations for Pi-bundled imports.
+- Removed package-local Pi settings and installed resources; use `pi -e` for a temporary load or `pi install` from a separate consumer.
+- Added package-layout, no-`.pi`, isolated synthetic-data, and Pi smoke checks.
+
 ## 0.3.0 — Portable note workspace
 
 - Replaced the ticket-like case/task/research-record workflow with a Zettelkasten-style free-form note workspace.

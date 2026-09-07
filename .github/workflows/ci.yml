@@ -16,6 +16,7 @@ jobs:
         with:
           node-version: 24
       - run: npm test
+      - run: npm run test:package
       - run: npm run check:policy
-      - run: npm run check:permissions
+      - run: PA_DATA_DIR="$(mktemp -d)" npm run check:permissions
       - run: bash -n scripts/*.sh

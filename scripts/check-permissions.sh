@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-data_dir="${PA_DATA_DIR:-$HOME/.local/share/personal-assistant}"
 
 check_dir() {
   local path="$1"
@@ -28,17 +26,23 @@ check_file() {
   echo "OK: private file $path"
 }
 
-check_dir "$data_dir/notes"
-check_dir "$data_dir/documents"
-check_dir "$data_dir/extracted"
-check_file "$data_dir/audit.ndjson"
-check_dir "$data_dir"
-check_file "$data_dir/documents.sqlite"
-check_file "$data_dir/documents.sqlite-wal"
-check_file "$data_dir/documents.sqlite-shm"
-check_dir "$root/.pi/sessions"
+if [[ -n "${PA_DATA_DIR:-}" ]]; then
+  data_dir="$PA_DATA_DIR"
+  check_dir "$data_dir/notes"
+  check_dir "$data_dir/documents"
+  check_dir "$data_dir/extracted"
+  check_file "$data_dir/audit.ndjson"
+  check_dir "$data_dir"
+  check_file "$data_dir/documents.sqlite"
+  check_file "$data_dir/documents.sqlite-wal"
+  check_file "$data_dir/documents.sqlite-shm"
+else
+  echo 'SKIP: set PA_DATA_DIR to a temporary/synthetic data directory to check runtime permissions.'
+fi
 
 cat <<'EOF'
 No credentials, document bodies, browser data, or environment values were read.
-A missing data directory is allowed before the first indexing run.
+A missing data directory is allowed before the first indexing run. This check
+never defaults to the main personal-assistant data directory; pass an explicit
+PA_DATA_DIR when checking a sandbox.
 EOF

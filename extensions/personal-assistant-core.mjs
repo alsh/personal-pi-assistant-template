@@ -4,10 +4,13 @@ import { promises as fs, appendFileSync, existsSync, chmodSync, mkdirSync, realp
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const execFileAsync = promisify(execFile);
 
+export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const DEFAULT_CONFIG_PATH = path.join(PACKAGE_ROOT, "personal-assistant.json");
 export const MAX_RESULT_CHARS = 20_000;
 export const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -17,7 +20,7 @@ const TEXT_EXTENSIONS = new Set([
   ".md", ".markdown", ".org", ".orgmode", ".txt", ".text", ".edm", ".xml", ".json", ".csv", ".tsv", ".html", ".htm", ".log",
  ]);
 const SUPPORTED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ".pdf", ".zip"]);
-const IGNORED_DIRECTORY_NAMES = new Set([".git", ".pi", "node_modules", ".cache", "backups", "credentials", "secrets"]);
+const IGNORED_DIRECTORY_NAMES = new Set([".git", "node_modules", ".cache", "backups", "credentials", "secrets"]);
 
 function isoNow() {
   return new Date().toISOString();
@@ -473,24 +476,36 @@ function initializeSchema(db) {
   }
 }
 
-export function loadProjectConfig(cwd) {
-  const configPath = path.join(cwd, ".pi", "personal-assistant.json");
+function resolveConfigPath(cwd, explicitPath) {
+  const configuredPath = explicitPath ?? process.env.PA_CONFIG_PATH;
+  if (configuredPath) return resolveFromCwd(cwd, configuredPath);
+  return DEFAULT_CONFIG_PATH;
+}
+
+export function loadProjectConfig(cwd = process.cwd(), { configPath } = {}) {
+  const projectCwd = path.resolve(cwd);
+  const resolvedConfigPath = resolveConfigPath(projectCwd, configPath);
+  const configRoot = path.dirname(resolvedConfigPath);
   let fileConfig = {};
-  if (existsSync(configPath)) {
+  if (existsSync(resolvedConfigPath)) {
     try {
-      fileConfig = JSON.parse(readFileSync(configPath, "utf8"));
+      fileConfig = JSON.parse(readFileSync(resolvedConfigPath, "utf8"));
     } catch (error) {
-      throw new Error(`Invalid .pi/personal-assistant.json: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Invalid ${resolvedConfigPath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  const fixtureRoot = path.join(cwd, "fixtures", "documents");
+  const fixtureRoot = path.join(configRoot, "fixtures", "documents");
   const environmentRoots = process.env.PA_DOCUMENT_ROOTS?.split(path.delimiter).map((value) => value.trim()).filter(Boolean);
   const roots = environmentRoots?.length
     ? environmentRoots
     : (Array.isArray(fileConfig.documentRoots) ? fileConfig.documentRoots.filter((value) => typeof value === "string") : (existsSync(fixtureRoot) ? ["fixtures/documents"] : []));
   return {
     documentRoots: roots,
+    documentRootBase: environmentRoots?.length ? projectCwd : configRoot,
     dataDir: typeof fileConfig.dataDir === "string" ? fileConfig.dataDir : "~/.local/share/personal-assistant",
+    dataDirBase: configRoot,
+    configPath: resolvedConfigPath,
+    configRoot,
     maxFileBytes: Number.isSafeInteger(fileConfig.maxFileBytes) && fileConfig.maxFileBytes > 0 ? fileConfig.maxFileBytes : DEFAULT_MAX_FILE_BYTES,
     maxTextBytes: Number.isSafeInteger(fileConfig.maxTextBytes) && fileConfig.maxTextBytes > 0 ? fileConfig.maxTextBytes : DEFAULT_MAX_TEXT_BYTES,
     maxFiles: Number.isSafeInteger(fileConfig.maxFiles) && fileConfig.maxFiles > 0 ? fileConfig.maxFiles : DEFAULT_MAX_FILES,
@@ -502,9 +517,11 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
   const baseConfig = loadProjectConfig(projectCwd);
   const config = { ...baseConfig, ...configOverride };
   const configuredRoots = rootsOverride ?? config.documentRoots;
+  const hasConfiguredRootOverride = Object.prototype.hasOwnProperty.call(configOverride, "documentRoots");
+  const rootBase = rootsOverride === undefined && !hasConfiguredRootOverride ? (config.documentRootBase ?? projectCwd) : projectCwd;
   const roots = [];
   for (const configured of configuredRoots) {
-    const absolute = resolveFromCwd(projectCwd, configured);
+    const absolute = resolveFromCwd(rootBase, configured);
     try {
       const real = realpathSync(absolute);
       const stat = statSync(real);
@@ -514,7 +531,9 @@ export async function createRuntime({ cwd, config: configOverride = {}, dataDir:
     }
   }
   const configuredDataDir = dataDirOverride ?? process.env.PA_DATA_DIR ?? config.dataDir;
-  const dataDir = resolveFromCwd(projectCwd, configuredDataDir);
+  const hasConfiguredDataDirOverride = Object.prototype.hasOwnProperty.call(configOverride, "dataDir");
+  const dataDirBase = dataDirOverride !== undefined || process.env.PA_DATA_DIR || hasConfiguredDataDirOverride ? projectCwd : (config.dataDirBase ?? projectCwd);
+  const dataDir = resolveFromCwd(dataDirBase, configuredDataDir);
   ensurePrivateDirectory(dataDir);
   const privateDocumentsDir = path.join(dataDir, "documents");
   const extractedDir = path.join(dataDir, "extracted");

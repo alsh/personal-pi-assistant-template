@@ -15,3 +15,11 @@ No remote connector is enabled.
 | Health/finance/banking | None | None | Parked |
 
 Public-sharing methods, unauthenticated endpoints, open binds, browser-cookie access, and remote destructive operations are prohibited.
+
+## Package loading boundary
+
+The package source contains only top-level resources (`extensions/`, `skills/`,
+`prompts/`, and `personal-assistant.json`). It has no `.pi` project state or
+installed extension. Direct tests use `pi -e /path/to/package` from a separate
+sandbox; persistent `pi install` commands run from a separate consumer, whose
+`.pi` settings stay outside the source package.
