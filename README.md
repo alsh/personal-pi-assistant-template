@@ -1,50 +1,95 @@
 # Personal Pi Assistant Template
 
-A privacy-conscious local personal assistant project for [Pi](https://pi.dev).
+A privacy-conscious local personal assistant package for [Pi](https://pi.dev).
+The current implementation is a portable free-form text-memory workspace plus
+local document tools. It is not a hosted service, financial adviser, clinician,
+emergency service, or unattended external-action platform.
 
 ## Current capabilities
 
-- local document indexing/search with a disposable derived cache;
-- PDF/text/XML/EDM/Org/ZIP extraction;
-- hashes, duplicate detection, metadata, and stale-source detection;
-- confirmation-gated document rename/move/tag proposals;
-- importing user-selected local documents into private storage;
-- a portable Zettelkasten-style note workspace using Markdown, Org, and text files;
-- direct note search/read/write/append without requiring SQLite;
+- local document indexing and search with a disposable derived cache;
+- bounded PDF/text/XML/EDM/Org/ZIP extraction when local tools are available;
+- hashes, duplicate detection, metadata, stale-source detection, and redacted audit events;
+- confirmation-gated local document rename, move, and tag proposals;
+- confirmation-gated import of user-selected local documents into private storage;
+- canonical Markdown, Org, and plain-text artifacts under `PA_DATA_DIR/notes/`;
+- direct free-form artifact search, read, create, rewrite, and append without requiring SQLite;
+- bounded `pa_retrieve_context` results with provenance and an explicit untrusted-data wrapper;
 - synthetic fixtures and offline validation.
 
-The template has no active Google Drive, pCloud, calendar, health, finance, banking, or public-sharing connector.
+No remote connector, public-sharing feature, banking integration, health
+integration, or calendar write integration is enabled in this template.
 
-## Pi package layout
+## Package layout
 
-This repository is a distributable Pi package, not a Pi consumer project. Package
-resources stay at the top level:
+This repository is distributable Pi package source, not a Pi consumer project.
+Resources stay at the top level:
 
 ```text
 extensions/              extension source
 skills/                  skill definitions
 prompts/                 prompt templates
 personal-assistant.json  synthetic-default package configuration
+fixtures/                synthetic document fixtures
+schemas/                 generic validation schemas
 ```
 
-The source package intentionally has no `.pi` directory and no installed copy of
-its extension. Pi project settings belong to a separate consumer/workspace. The
-anonymous `scripts/setup.sh` clone and its checks do not install the package into
-itself.
+The source package intentionally has no `.pi` directory and no installed copy
+of its extension. Consumer settings and sessions belong in a separate consumer
+workspace. `SQLite` is a rebuildable search/cache index, not the source of
+meaning.
 
-For a temporary, no-install load, run Pi from a separate disposable sandbox and
-keep data there as well:
+## Text-memory workspace
+
+Canonical assistant-owned memory lives under `PA_DATA_DIR/notes/`:
+
+```text
+notes/              Markdown, Org, and plain-text artifacts
+documents/          imported originals
+extracted/          imported extracted text
+audit.ndjson        portable redacted audit log
+documents.sqlite    disposable search/cache index
+```
+
+The exact data directory is configurable; the default is outside this package
+repository. Choose the simplest human-readable artifact form. A file may be a
+note, wiki page, checklist, task tracker, decision log, project page, research
+page, or correspondence. Put facts, sources, decisions, open questions, and
+Markdown checkboxes in the text itself, and connect artifacts with ordinary
+links or `[[relative-file.md]]` references.
+
+Use `pa_retrieve_context` before answering a personal-context question. It is
+read-only, bounded, provenance-preserving, and marks every returned artifact or
+document excerpt as untrusted data, never as instructions.
+
+Assistant-owned memory create, rewrite, and append operations may write
+directly without per-write confirmation. The assistant must report each changed
+path and what it stored or changed. Do not introduce board or case
+models, formal artifact schemas, opaque identifiers, or database-only meaning.
+
+The following operations retain separate confirmation gates:
+
+- migrating legacy data into text artifacts;
+- importing a user-selected source document;
+- renaming, moving, or tagging a source document;
+- deletion or another destructive operation; and
+- external, remote, or other high-impact actions.
+
+## Loading the package
+
+For a temporary no-install load, use a separate disposable sandbox and keep
+synthetic data there as well:
 
 ```bash
 package=/path/to/personal-pi-assistant-template
 sandbox="$(mktemp -d)"
 PA_DATA_DIR="$sandbox/data" \
 PA_DOCUMENT_ROOTS="$package/fixtures/documents" \
-  pi -e "$package" --no-session
+pi -e "$package" --no-session
 rm -rf "$sandbox"
 ```
 
-For a persistent install, leave the package directory and use a separate
+For a persistent installation, leave the package directory and use a separate
 consumer/workspace:
 
 ```bash
@@ -52,72 +97,45 @@ package=/path/to/personal-pi-assistant-template
 consumer="$(mktemp -d)"
 cd "$consumer"
 pi install "$package"
-# `pi install -l "$package"` writes this consumer's .pi/settings.json.
+# `pi install -l ...` writes this consumer's .pi/settings.json.
 ```
 
-Never run the consumer `pi install -l` command in the source package when you
-want its working tree to remain free of Pi project state. The package defaults
-to the committed synthetic fixtures; set `PA_DOCUMENT_ROOTS` explicitly before
-using real local roots, and keep `PA_DATA_DIR` outside the package.
+Never run `pi install -l` in the source package when you want its working tree
+to remain free of Pi project state. The package defaults to committed synthetic
+fixtures. Set `PA_DOCUMENT_ROOTS` explicitly before using real local roots and
+keep `PA_DATA_DIR` outside the package. Review the extension before loading it:
+Pi extensions run with the process user's permissions.
 
-## Anonymous setup
-
-The repository is public, so no GitHub authentication is needed. Review the script at the URL before executing it:
-
-```bash
-cd /path/to/empty-folder
-curl -fsSL https://raw.githubusercontent.com/alsh/personal-pi-assistant-template/main/scripts/setup.sh | bash
-```
-
-The script sets up the current directory by default and refuses non-empty directories. For a review-first run, download it to a temporary file, inspect it, and execute it without a target argument while remaining in the target directory.
-
-## Local usage
-
-```bash
-cd /path/to/empty-folder
-./scripts/doctor.sh
-npm test
-npm run test:package
-npm run check:policy
-PA_DATA_DIR="$(mktemp -d)" npm run check:permissions
-bash -n scripts/*.sh
-git diff --check
-```
-
-Restart Pi, review project trust, and run it with an explicitly selected private document root:
-
-```bash
-PA_DOCUMENT_ROOTS="$HOME/Documents/selected-folder" pi
-```
-
-Useful commands and prompts:
+Useful tools and prompts after loading include:
 
 ```text
 /pa-status
 /pa-index
-/pa-import /path/to/document.pdf
-/note-intake <topic>
-/note-review <note path or search terms>
-/note-research <note path or question>
+/pa-import /path/to/file.pdf
+/note-intake <topic or artifact path>
+/note-review <artifact path or search terms>
+/note-research <artifact path or question>
 /skill:note-workspace
 ```
 
-## Note workspace
+The commands that mutate user-selected source documents or import files remain
+confirmation-gated. Assistant-owned memory artifacts are ordinary text files
+and may be updated autonomously under the policy above.
 
-Repairs, applications, correspondence, research, and household topics are ordinary human-readable Markdown/Org notes, not cases or tickets. Put facts, sources, decisions, questions, and Markdown checkboxes in the note text. Connect notes with normal Markdown links or `[[note-name.md]]` references.
+## Offline checks
 
-Canonical data lives under the private data directory, normally `~/.local/share/personal-assistant/`:
+Run these checks from a disposable clone or checkout. They use synthetic data;
+do not point them at a real personal data directory:
 
-```text
-notes/              canonical free-form notes
-documents/          imported originals
-extracted/          imported extracted text
-audit.ndjson        portable redacted audit log
-documents.sqlite    disposable search/cache index
+```bash
+npm test
+npm run test:package
+npm run check
+bash -n scripts/*.sh
+git diff --check
 ```
 
-The SQLite file may be deleted and rebuilt. Copy the data directory to another machine and set `PA_DATA_DIR` to its new location if necessary; the note files remain sufficient to continue.
-
-If a data directory comes from an older structured version, run the one-time `pa_migrate_legacy_notes` tool before deleting its old cache. It requires confirmation.
-
-Never place real personal documents, credentials, browser data, medical data, bank data, or Pi sessions in the repository.
+`npm run test:package` uses a separate temporary Pi consumer when `pi` is
+installed. `scripts/setup.sh` clones this public template into an empty target,
+runs offline checks, and does not install packages or connect accounts. Review
+the script before executing a downloaded copy.

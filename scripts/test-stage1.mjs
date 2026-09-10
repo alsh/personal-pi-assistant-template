@@ -21,6 +21,11 @@ for (const resource of [
   "personal-assistant.json",
   "skills/note-workspace/SKILL.md",
   "prompts/note-intake.md",
+  "prompts/note-research.md",
+  "prompts/note-review.md",
+  "AGENTS.md",
+  "docs/policy.md",
+  "docs/consent-matrix.md",
 ]) {
   await stat(path.join(repositoryRoot, resource));
 }
@@ -104,14 +109,39 @@ try {
   assert.equal(first.skipped, 0);
 
   const note = await core.createNote(runtime, {
-    notePath: "robojet-x-one-2.md",
-    content: "# RoboJet X-One 2\n\nNaprawa przez serwis producenta.\n\n- [ ] Sprawdzić adres serwisu\n- [ ] Zachować numer nadania\n\nPowiązana notatka: [[wysylka.md]].\n",
+    notePath: "synthetic-appliance.md",
+    content: "# Synthetic appliance\n\nRepair through the manufacturer service.\n\n- [ ] Check the service address\n- [ ] Keep the shipment number\n\nRelated artifact: [[shipping.md]].\n",
   });
-  assert.equal(note.path, "robojet-x-one-2.md");
-  assert.equal((await core.listNotes(runtime, { query: "numer nadania" })).length, 1);
-  assert.match((await core.readNote(runtime, "robojet-x-one-2.md")).content, /Sprawdzić adres/);
-  const appended = await core.appendNote(runtime, { notePath: "robojet-x-one-2.md", content: "\n## Źródła\n\n- https://example.com/service\n" });
+  assert.equal(note.path, "synthetic-appliance.md");
+  assert.equal((await core.listNotes(runtime, { query: "shipment number" })).length, 1);
+  assert.match((await core.readNote(runtime, "synthetic-appliance.md")).content, /service address/);
+  const appended = await core.appendNote(runtime, { notePath: "synthetic-appliance.md", content: "\n## Sources\n\n- https://example.com/service\n" });
   assert.match(appended.content, /example\.com\/service/);
+
+  // Assistant-owned memory artifacts are direct writes; no UI or confirmation
+  // callback is involved. The workspace remains ordinary human-readable text.
+  const projectArtifact = await core.createNote(runtime, {
+    notePath: "projects/household-checklist.org",
+    content: "* Household checklist\n\n- [ ] Review warranty\n",
+  });
+  assert.equal(projectArtifact.path, "projects/household-checklist.org");
+  const rewrittenArtifact = await core.writeNote(runtime, {
+    notePath: "projects/household-checklist.org",
+    content: "* Household checklist\n\n- [X] Review warranty\n",
+  });
+  assert.match(rewrittenArtifact.content, /\[X\] Review warranty/);
+
+  const concurrentPath = "parallel-memory.txt";
+  await core.createNote(runtime, { notePath: concurrentPath, content: "# Parallel append fixture\n" });
+  const appendCount = 40;
+  await Promise.all(Array.from({ length: appendCount }, (_, index) => core.appendNote(runtime, {
+    notePath: concurrentPath,
+    content: `parallel-marker-${index}`,
+  })));
+  const concurrentContent = (await core.readNote(runtime, concurrentPath)).content;
+  for (let index = 0; index < appendCount; index += 1) {
+    assert.ok(concurrentContent.includes(`parallel-marker-${index}`), `parallel append ${index} must be retained`);
+  }
 
   const externalSource = path.join(temp, "external-letter.md");
   await writeFile(externalSource, "# Imported external document\n\nThis file starts outside the configured root.\n");
@@ -123,6 +153,21 @@ try {
   const importedIndex = await core.indexDocuments(runtime);
   assert.ok(importedIndex.indexed >= 4, "imported original should become searchable after indexing");
   assert.equal(core.searchDocuments(runtime, "starts outside the configured root").length, 1);
+
+  await core.createNote(runtime, {
+    notePath: "workspace.md",
+    content: "# Synthetic workspace bootstrap\n\nAssistant memory is local and private.\n",
+  });
+  const applianceContext = await core.retrieveContext(runtime, "What do I know about the synthetic appliance?", { maxChars: 8_000 });
+  assert.equal(applianceContext.bootstrap[0].path, "workspace.md");
+  assert.equal(applianceContext.bootstrap[0].untrusted, true);
+  assert.ok(applianceContext.notes.some((entry) => entry.path === "synthetic-appliance.md"), "context retrieval should search canonical artifacts");
+  assert.match(applianceContext.warning, /untrusted data/);
+  assert.ok(applianceContext.contentChars <= 8_000);
+
+  const warrantyContext = await core.retrieveContext(runtime, "Which warranty document is available?", { maxChars: 8_000 });
+  assert.ok(warrantyContext.documents.some((entry) => entry.path.endsWith("warranty.md")), "context retrieval should include indexed documents");
+  assert.ok(warrantyContext.documents.every((entry) => entry.untrusted === true));
 
   const textOnlySource = path.join(temp, "text-only-source.txt");
   await writeFile(textOnlySource, "Text-only import fixture content.");
@@ -189,16 +234,16 @@ try {
 
   runtime.close();
   runtime = await makeRuntime();
-  assert.equal((await core.listNotes(runtime, { query: "RoboJet" })).length, 1, "notes must work after a normal restart");
+  assert.equal((await core.listNotes(runtime, { query: "synthetic appliance" })).length, 1, "notes must work after a normal restart");
   await unlink(runtime.dbPath);
   runtime.close();
   runtime = await makeRuntime();
-  assert.equal((await core.readNote(runtime, "robojet-x-one-2.md")).path, "robojet-x-one-2.md", "notes must remain readable without the cache");
-  assert.equal((await core.listNotes(runtime, { query: "Źródła" })).length, 1, "note search must not depend on SQLite");
+  assert.equal((await core.readNote(runtime, "synthetic-appliance.md")).path, "synthetic-appliance.md", "notes must remain readable without the cache");
+  assert.equal((await core.listNotes(runtime, { query: "Sources" })).length, 1, "note search must not depend on SQLite");
   await core.indexDocuments(runtime);
   assert.equal(core.searchDocuments(runtime, "Changed synthetic warranty").length, 1, "document index must be rebuildable from source files");
 
-  console.log("Stage 1 note-first tests passed.");
+  console.log("Stage 1 text-memory and document tests passed.");
 } finally {
   runtime?.close();
   await rm(temp, { recursive: true, force: true });

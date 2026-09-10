@@ -2,11 +2,12 @@
   "name": "personal-pi-assistant",
   "version": "0.3.0",
   "type": "module",
-  "description": "Privacy-conscious local personal assistant Pi package with note-first document tools.",
+  "description": "Privacy-conscious local personal assistant Pi package with autonomous assistant-owned text-memory writes, bounded pa_retrieve_context, and confirmation-gated document tools.",
   "keywords": [
     "pi-package",
     "personal-assistant",
     "documents",
+    "text-memory",
     "zettelkasten"
   ],
   "pi": {
