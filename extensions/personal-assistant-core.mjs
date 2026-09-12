@@ -532,8 +532,7 @@ function initializeSchema(db) {
 }
 
 function resolveConfigPath(cwd, explicitPath) {
-  const configuredPath = explicitPath ?? process.env.PA_CONFIG_PATH;
-  if (configuredPath) return resolveFromCwd(cwd, configuredPath);
+  if (explicitPath) return resolveFromCwd(cwd, explicitPath);
   return DEFAULT_CONFIG_PATH;
 }
 
@@ -550,13 +549,12 @@ export function loadProjectConfig(cwd = process.cwd(), { configPath } = {}) {
     }
   }
   const fixtureRoot = path.join(configRoot, "fixtures", "documents");
-  const environmentRoots = process.env.PA_DOCUMENT_ROOTS?.split(path.delimiter).map((value) => value.trim()).filter(Boolean);
-  const roots = environmentRoots?.length
-    ? environmentRoots
-    : (Array.isArray(fileConfig.documentRoots) ? fileConfig.documentRoots.filter((value) => typeof value === "string") : (existsSync(fixtureRoot) ? ["fixtures/documents"] : []));
+  const roots = Array.isArray(fileConfig.documentRoots)
+    ? fileConfig.documentRoots.filter((value) => typeof value === "string")
+    : (existsSync(fixtureRoot) ? ["fixtures/documents"] : []);
   return {
     documentRoots: roots,
-    documentRootBase: environmentRoots?.length ? projectCwd : configRoot,
+    documentRootBase: configRoot,
     dataDir: typeof fileConfig.dataDir === "string" ? fileConfig.dataDir : "~/.local/share/personal-assistant",
     dataDirBase: configRoot,
     configPath: resolvedConfigPath,

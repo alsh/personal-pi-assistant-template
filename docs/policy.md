@@ -49,5 +49,7 @@ This repository is Pi package source. `extensions/`, `skills/`, `prompts/`, and
 must not contain a `.pi` directory or an installed extension. Use
 `pi -e /path/to/package` from a separate temporary sandbox for a direct test, or
 run `pi install /path/to/package` from a separate consumer/workspace. Keep
-consumer settings, Pi sessions, `PA_DATA_DIR`, and real `PA_DOCUMENT_ROOTS`
-outside the package repository. The committed document root remains synthetic.
+consumer settings, Pi sessions, and `PA_DATA_DIR` outside the package repository.
+The committed document root remains synthetic; private source documents belong
+under `PA_DATA_DIR/documents` or enter through the confirmation-gated import
+workflow.

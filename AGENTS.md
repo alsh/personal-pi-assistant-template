@@ -36,9 +36,10 @@ in `extensions/`, `skills/`, `prompts/`, and `personal-assistant.json`. Do not
 commit a `.pi` directory, project settings, sessions, or an installed copy of
 the extension here. Test a temporary load with `pi -e /path/to/package` from a
 separate disposable sandbox, and use `pi install` only from a separate consumer
-workspace. The package default document root is the committed synthetic fixture;
-pass `PA_DOCUMENT_ROOTS` explicitly for real roots and keep `PA_DATA_DIR` outside
-the package.
+workspace. The package default document root is the committed synthetic fixture.
+Private source documents should be placed under `PA_DATA_DIR/documents` or
+selected through the confirmation-gated import workflow. Keep `PA_DATA_DIR`
+outside the package.
 
 ## Current scope
 

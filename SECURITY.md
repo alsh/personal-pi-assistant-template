@@ -24,5 +24,6 @@ The project currently has no remote connector and no public-sharing feature.
 Keep that invariant in future changes. The package repository must contain only
 top-level Pi resources and source documentation; do not commit a `.pi` project
 settings directory or an installed copy of the extension. Run package smoke
-tests with `PA_DATA_DIR` and `PA_DOCUMENT_ROOTS` set to temporary synthetic
-paths, and keep consumer settings in a separate sandbox.
+tests with only `PA_DATA_DIR` set to a temporary synthetic data root; the
+package fixture root and its private `PA_DATA_DIR/documents` root are resolved
+automatically, and keep consumer settings in a separate sandbox.

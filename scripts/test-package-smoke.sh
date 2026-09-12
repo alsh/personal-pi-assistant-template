@@ -9,16 +9,14 @@ fi
 
 sandbox="$(mktemp -d "${TMPDIR:-/tmp}/personal-assistant-pi-smoke.XXXXXX")"
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/documents"
-printf '# Synthetic Pi smoke fixture\n' >"$sandbox/documents/smoke.md"
+mkdir -p "$sandbox/data/documents"
+printf '# Synthetic private Pi smoke fixture\n' >"$sandbox/data/documents/smoke.md"
 
 # Keep Pi's settings/session lookup and the assistant data outside both the
 # package repository and the user's main data directory. --offline prevents
 # startup network operations; --list-models needs no provider request.
 export PI_CODING_AGENT_DIR="$sandbox/pi-config"
 export PA_DATA_DIR="$sandbox/data"
-export PA_DOCUMENT_ROOTS="$sandbox/documents"
-export PI_OFFLINE=1
 
 mkdir -p "$sandbox/consumer"
 (

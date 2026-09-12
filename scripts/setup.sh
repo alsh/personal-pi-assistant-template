@@ -125,8 +125,9 @@ Before using real documents:
        pi install "$package_path"
      Use `pi install -l "$package_path"` only there; it writes that
      consumer's `.pi/settings.json`, not package resources.
-  4. Set `PA_DOCUMENT_ROOTS` only to explicitly selected private roots after
-     review; the default package root remains synthetic fixtures.
+  4. Place private source documents under `PA_DATA_DIR/documents`, or use
+     /pa-import for a user-selected import after its confirmation prompt; the
+     default package root remains synthetic fixtures.
   5. Run /pa-status, then /pa-index after the package is loaded.
 
 No extension was installed into the cloned package, no credentials were read,

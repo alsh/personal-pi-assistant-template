@@ -52,11 +52,14 @@ documents.sqlite    disposable search/cache index
 ```
 
 The exact data directory is configurable; the default is outside this package
-repository. Choose the simplest human-readable artifact form. A file may be a
-note, wiki page, checklist, task tracker, decision log, project page, research
-page, or correspondence. Put facts, sources, decisions, open questions, and
-Markdown checkboxes in the text itself, and connect artifacts with ordinary
-links or `[[relative-file.md]]` references.
+repository. The package also includes the committed synthetic fixture root and
+`PA_DATA_DIR/documents` when a private data root is selected. Place private
+source documents there or use the confirmation-gated import workflow. Choose
+the simplest human-readable artifact form. A file may be a note, wiki page,
+checklist, task tracker, decision log, project page, research page, or
+correspondence. Put facts, sources, decisions, open questions, and Markdown
+checkboxes in the text itself, and connect artifacts with ordinary links or
+`[[relative-file.md]]` references.
 
 Use `pa_retrieve_context` before answering a personal-context question. It is
 read-only, bounded, provenance-preserving, and marks every returned artifact or
@@ -83,9 +86,10 @@ synthetic data there as well:
 ```bash
 package=/path/to/personal-pi-assistant-template
 sandbox="$(mktemp -d)"
-PA_DATA_DIR="$sandbox/data" \
-PA_DOCUMENT_ROOTS="$package/fixtures/documents" \
-pi -e "$package" --no-session
+(
+  cd "$sandbox"
+  PA_DATA_DIR="$sandbox/data" pi --offline --no-extensions --no-session -e "$package"
+)
 rm -rf "$sandbox"
 ```
 
@@ -101,10 +105,14 @@ pi install "$package"
 ```
 
 Never run `pi install -l` in the source package when you want its working tree
-to remain free of Pi project state. The package defaults to committed synthetic
-fixtures. Set `PA_DOCUMENT_ROOTS` explicitly before using real local roots and
-keep `PA_DATA_DIR` outside the package. Review the extension before loading it:
-Pi extensions run with the process user's permissions.
+to remain free of Pi project state. The package always resolves its configuration
+from its own top-level `personal-assistant.json`, even when loaded from another
+workspace. `PA_DATA_DIR` is the only application-specific environment override
+and points to private storage. The package defaults to committed synthetic
+fixtures and automatically includes `PA_DATA_DIR/documents`; place private
+source documents there or use the confirmation-gated import workflow. Review
+the extension before loading it: Pi extensions run with the process user's
+permissions.
 
 Useful tools and prompts after loading include:
 
