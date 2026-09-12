@@ -98,11 +98,17 @@ try {
   const environmentRuntime = await core.createRuntime({ cwd: path.join(temp, "consumer") });
   try {
     assert.equal(environmentRuntime.dataDir, environmentDataDir, "PA_DATA_DIR must select the private data root");
+    assert.equal(environmentRuntime.notesDir, path.join(environmentDataDir, "notes"), "notes must be constructed under PA_DATA_DIR");
     assert.ok(environmentRuntime.roots.some((root) => root.absolute === path.join(environmentDataDir, "documents")), "private data documents must be indexed automatically");
+    await writeFile(path.join(environmentRuntime.notesDir, "sentinel.md"), "# Synthetic environment note\n\nThis note must remain in the canonical workspace.\n");
+    const environmentNoteStats = await core.getNoteStats(environmentRuntime);
+    assert.equal(environmentNoteStats.count, 1, "PA_DATA_DIR notes must be visible to note stats");
+    assert.deepEqual((await core.listNotes(environmentRuntime)).map(({ path: notePath }) => notePath), ["sentinel.md"], "PA_DATA_DIR notes must be visible to note listing");
     await writeFile(path.join(environmentRuntime.privateDocumentsDir, "private-import.md"), "# Private imported fixture\n\nThis document lives under the private data root.\n");
     const privateIndex = await core.indexDocuments(environmentRuntime);
     assert.ok(privateIndex.indexed >= 1, "private data-root documents should be indexed");
     assert.equal(core.searchDocuments(environmentRuntime, "private data root").length, 1, "private data-root documents should be searchable");
+    assert.equal(core.searchDocuments(environmentRuntime, "Synthetic environment note").length, 0, "document search must not search canonical notes");
   } finally {
     environmentRuntime.close();
     delete process.env.PA_DATA_DIR;
